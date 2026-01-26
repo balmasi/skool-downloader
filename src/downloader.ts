@@ -32,9 +32,10 @@ export class Downloader {
         if (!this.ytDlp) await this.init();
 
         await fs.ensureDir(outputDir);
-        const outputPath = path.join(outputDir, `${filename}.%(ext)s`);
+        const outputPath = path.join(outputDir, `${filename}.mp4`);
 
-        console.log(`Downloading video from ${url}...`);
+        const displayUrl = url.length > 100 ? url.substring(0, 97) + '...' : url;
+        console.log(`Downloading video from ${displayUrl}`);
 
         const args = [
             url,
@@ -42,7 +43,10 @@ export class Downloader {
             '--no-check-certificates',
             '--prefer-free-formats',
             '--add-header', 'Referer:https://www.skool.com/',
-            '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            '--merge-output-format', 'mp4',
+            '-N', '16',
+            '--postprocessor-args', 'ffmpeg:-movflags +faststart'
         ];
 
         if (fs.existsSync(COOKIES_TXT_PATH)) {

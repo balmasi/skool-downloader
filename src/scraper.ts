@@ -98,7 +98,6 @@ export class Scraper {
             return script ? JSON.parse(script.innerText) : null;
         });
 
-        await page.close();
 
         if (!nextData) throw new Error(`Could not find __NEXT_DATA__ for lesson at ${url}`);
 
@@ -134,14 +133,65 @@ export class Scraper {
         // Handle native videoId vs videoLink
         let vLink = metadata.videoLink || foundLesson?.video?.url || '';
 
+        // Native Skool Player Handling (Mux)
         if (!vLink && metadata.videoId) {
             console.log(`    ℹ️ Native videoId found: ${metadata.videoId}.`);
-            // The signed URL might be in another part of pageProps or require a fetch
-            // Check pageProps.video for native player data
-            if (pageProps.video && pageProps.video.id === metadata.videoId) {
-                vLink = pageProps.video.url;
+
+            try {
+                // Try to find and click the play button/thumbnail to trigger stream signed URL generation
+                const playButtonSelector = 'div[class*="MuxThumbnailWrapper"]';
+                const hasPlayButton = await page.evaluate((sel) => !!document.querySelector(sel), playButtonSelector);
+
+                if (hasPlayButton) {
+                    console.log('    🖱️ Clicking play button to initialize stream...');
+                    await page.click(playButtonSelector);
+
+                    // Poll for the stream manifest to appear in network entries or player src
+                    let attempts = 0;
+                    while (attempts < 10) {
+                        vLink = await page.evaluate(() => {
+                            // 1. Check performance entries for m3u8
+                            const entries = performance.getEntriesByType('resource')
+                                .filter(e => e.name.includes('m3u8') && e.name.includes('token='));
+                            if (entries.length > 0) return (entries[entries.length - 1] as PerformanceResourceTiming).name;
+
+                            // 2. Search all shadow roots for a video element (BFS)
+                            const stack: any[] = [document];
+                            while (stack.length > 0) {
+                                const root = stack.pop();
+                                const video = root.querySelector('video');
+                                if (video && video.src && video.src.includes('m3u8')) return video.src;
+
+                                const elements = root.querySelectorAll('*');
+                                for (let i = 0; i < elements.length; i++) {
+                                    if (elements[i].shadowRoot) {
+                                        stack.push(elements[i].shadowRoot);
+                                    }
+                                }
+                            }
+                            return null;
+                        });
+
+                        if (vLink) break;
+                        await page.waitForTimeout(1000);
+                        attempts++;
+                    }
+                }
+
+                // Fallback: Reconstruct from pageProps if interaction failed but we have IDs
+                if (!vLink) {
+                    const videoData = pageProps.video || pageProps.course?.video;
+                    if (videoData && videoData.id === metadata.videoId && videoData.playbackId && videoData.playbackToken) {
+                        console.log('    ℹ️ Using reconstructed HLS URL from page props fallback.');
+                        vLink = `https://stream.video.skool.com/${videoData.playbackId}.m3u8?token=${videoData.playbackToken}`;
+                    }
+                }
+            } catch (err) {
+                console.warn('    ⚠️ Interaction-based extraction failed:', err);
             }
         }
+
+        await page.close();
 
         // Skool stores rich text as a stringified JSON array or primitive HTML
         let body = metadata.desc || foundLesson?.body || '';

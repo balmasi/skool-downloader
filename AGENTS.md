@@ -22,13 +22,18 @@ The goal of this project is to provide a robust, platform-independent tool for c
    Skool uses TipTap/ProseMirror for lesson content. The scraper includes a parser (`parseTipTap`) to convert the stringified JSON content back into clean, localizable HTML.
 5. **Asset Localization**:
    The `Downloader` class identifies `<img>` tags, downloads the images into a local `assets/` folder, and rewrites the HTML sources before saving.
+6. **Native Video Extraction**:
+   Skool's native Mux player requires a "play" click to generate authenticated HLS manifest URLs. The scraper simulates this interaction and monitors performance entries to extract the signed `.m3u8` link.
+7. **High-Performance Downloads**:
+   The downloader is optimized with `-N 16` for parallel fragment fetching and `ffmpeg` post-processing (`+faststart`) for instant in-browser playback.
 
 ## Project Structure
 - `src/auth.ts`: Handles the manual login flow and cookie conversion.
 - `src/scraper.ts`: Navigates the course tree and parses lesson metadata from Next.js state.
 - `src/downloader.ts`: Wrapper for `yt-dlp` and logic for image localization.
-- `src/index.ts`: CLI entry point, single lesson/full course logic, and offline HTML page/index generation.
+- `src/index.ts`: CLI entry point, single lesson/full course logic (with URL sanitization), and offline HTML page/index generation.
 - **Single Lesson Extraction**: The tool detects `?md=` or `?lesson=` in the input URL to download only a specific lesson instead of the entire course.
+- **Native Video Handling**: Automates interaction with the Mux player to capture signed tokens.
 - `bin/`: Stores the platform-specific `yt-dlp` binary.
 
 - **Attachments**: Currently, course attachments (PDFs/DOCX) are identified in `__NEXT_DATA__` (under `course.metadata.resources`) but not yet downloaded. Logic should be added to `src/downloader.ts`.

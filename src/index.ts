@@ -27,7 +27,7 @@ async function main() {
         return;
     }
 
-    const inputUrl = command;
+    const inputUrl = command.replace(/\\/g, '');
     let targetLessonId: string | null = null;
     try {
         const urlObj = new URL(inputUrl);

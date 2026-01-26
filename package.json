@@ -8,8 +8,8 @@
     "skool": "./bin/skool.js"
   },
   "scripts": {
-    "skool": "node --loader ts-node/esm src/index.ts",
-    "login": "node --loader ts-node/esm src/index.ts login",
+    "skool": "tsx src/index.ts",
+    "login": "tsx src/index.ts login",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -26,6 +26,7 @@
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^25.0.10",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

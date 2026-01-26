@@ -1,10 +1,10 @@
 # Skool Downloader TODO
 
 ## 🛠️ Critical Fixes & Improvements
-- [ ] **Fix Native Skool Video Downloads (HLS/m3u8)**
-    - [ ] Investigate if native videos require a "play" click to trigger signed token generation.
-    - [ ] Update Scraper to detect and extract native m3u8 playlist URLs.
-    - [ ] Ensure signed tokens are passed correctly to `yt-dlp`.
+- [x] **Fix Native Skool Video Downloads (HLS/m3u8)**
+    - [x] Investigate if native videos require a "play" click to trigger signed token generation.
+    - [x] Update Scraper to detect and extract native m3u8 playlist URLs by interacting with the player.
+    - [x] Ensure signed tokens are passed correctly to `yt-dlp`.
 - [x] **Preserve Module Order**
     - [x] Number the module folders (e.g., `1-Module Name`, `2-Module Name`) for lexicographical sorting.
 - [ ] **Download Course Attachments**
