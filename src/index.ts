@@ -109,6 +109,27 @@ async function main() {
                         }
                     }
 
+                    // Download resources
+                    const resourcesHtml: string[] = [];
+                    if (lessonData.resources && lessonData.resources.length > 0) {
+                        const resourcesDir = path.join(lessonDir, 'resources');
+                        await fs.ensureDir(resourcesDir);
+
+                        for (const res of lessonData.resources) {
+                            if (res.downloadUrl) {
+                                console.log(`    ⬇️ Downloading resource: ${res.title}`);
+                                try {
+                                    const safeFileName = res.file_name.replace(/[/\\?%*:|"<>]/g, '-');
+                                    const resPath = path.join(resourcesDir, safeFileName);
+                                    await downloader.downloadAsset(res.downloadUrl, resPath);
+                                    resourcesHtml.push(`<li><a href="resources/${encodeURIComponent(safeFileName)}" target="_blank">${res.title}</a></li>`);
+                                } catch (err) {
+                                    console.error(`    ⚠️ Failed to download resource ${res.title}:`, err);
+                                }
+                            }
+                        }
+                    }
+
                     // Save content
                     const htmlContent = `
                         <!DOCTYPE html>
@@ -122,8 +143,15 @@ async function main() {
                                 h1 { border-bottom: 2px solid #eee; padding-bottom: 10px; color: #111; }
                                 video { max-width: 100%; border-radius: 8px; margin-bottom: 30px; display: block; box-shadow: 0 8px 16px rgba(0,0,0,0.1); background: #000; }
                                 img { max-width: 100%; border-radius: 4px; height: auto; margin: 10px 0; }
-                                .content { font-size: 18px; }
+                                .content { font-size: 18px; margin-bottom: 30px; }
                                 .content p { margin-bottom: 1.5em; }
+                                .resources { background: #f0f7ff; padding: 20px; border-radius: 8px; border: 1px solid #d0e7ff; margin-top: 30px; }
+                                .resources h3 { margin-top: 0; color: #0056b3; }
+                                .resources ul { list-style: none; padding: 0; margin: 0; }
+                                .resources li { margin-bottom: 10px; }
+                                .resources li:last-child { margin-bottom: 0; }
+                                .resources a { color: #0056b3; font-weight: 500; display: flex; align-items: center; }
+                                .resources a::before { content: "📁"; margin-right: 8px; }
                                 a { color: #5a1cb5; text-decoration: none; word-break: break-all; }
                                 a:hover { text-decoration: underline; }
                                 .breadcrumb { font-size: 14px; color: #888; margin-bottom: 20px; }
@@ -138,6 +166,14 @@ async function main() {
                                 <div class="content">
                                     ${localizedHtml}
                                 </div>
+                                ${resourcesHtml.length > 0 ? `
+                                <div class="resources">
+                                    <h3>Resources / Attachments</h3>
+                                    <ul>
+                                        ${resourcesHtml.join('')}
+                                    </ul>
+                                </div>
+                                ` : ''}
                                 <div class="nav">
                                     <a href="../../index.html">← Back to Course Index</a>
                                 </div>
@@ -145,6 +181,7 @@ async function main() {
                         </body>
                         </html>
                     `;
+
 
                     await fs.writeFile(path.join(lessonDir, 'index.html'), htmlContent);
                     processedLessons.push({ title: lesson.title, path: `${moduleDirName}/${lessonDirName}/index.html` });

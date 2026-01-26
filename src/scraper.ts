@@ -4,6 +4,14 @@ import path from 'path';
 
 const STORAGE_STATE_PATH = path.join(process.cwd(), 'storage_state.json');
 
+export interface Resource {
+    title: string;
+    file_id: string;
+    file_name: string;
+    file_content_type: string;
+    downloadUrl?: string;
+}
+
 export interface Lesson {
     id: string;
     title: string;
@@ -11,6 +19,7 @@ export interface Lesson {
     index?: number;
     contentHtml?: string;
     videoLink?: string;
+    resources?: Resource[];
 }
 
 export interface Module {
@@ -90,14 +99,14 @@ export class Scraper {
     async extractLessonData(url: string): Promise<Lesson> {
         if (!this.context) await this.init();
         const page = await this.context!.newPage();
+
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(5000);
 
         const nextData = await page.evaluate(() => {
             const script = document.getElementById('__NEXT_DATA__');
             return script ? JSON.parse(script.innerText) : null;
         });
-
 
         if (!nextData) throw new Error(`Could not find __NEXT_DATA__ for lesson at ${url}`);
 
@@ -191,6 +200,60 @@ export class Scraper {
             }
         }
 
+        // Resource extraction
+        let resources: Resource[] = [];
+        try {
+            const rawResources = metadata.resources || foundLesson?.resources || '[]';
+            if (typeof rawResources === 'string') {
+                resources = JSON.parse(rawResources);
+            } else if (Array.isArray(rawResources)) {
+                resources = rawResources;
+            }
+        } catch (e) {
+            console.warn('    ⚠️ Failed to parse resources', e);
+        }
+
+        // Fetch download URLs for each resource using direct API calls
+        if (resources.length > 0) {
+            console.log(`    📥 Found ${resources.length} resources. Fetching download URLs...`);
+
+            for (const res of resources) {
+                try {
+                    console.log(`      🔗 Requesting download URL for "${res.title}"...`);
+
+                    // Use Playwright's page context to make authenticated API request
+                    const response = await page.evaluate(async (fileId: string) => {
+                        const apiUrl = `https://api2.skool.com/files/${fileId}/download-url?expire=28800`;
+                        try {
+                            const resp = await fetch(apiUrl, {
+                                method: 'POST',
+                                credentials: 'include' // Include cookies for auth
+                            });
+
+                            if (!resp.ok) {
+                                return { success: false, error: `HTTP ${resp.status}` };
+                            }
+
+                            const text = await resp.text();
+                            // Response is just the plain URL as text
+                            return { success: true, url: text.trim() };
+                        } catch (e) {
+                            return { success: false, error: String(e) };
+                        }
+                    }, res.file_id);
+
+                    if (response.success && response.url) {
+                        res.downloadUrl = response.url;
+                        console.log(`      ✅ Got download URL for "${res.title}"`);
+                    } else {
+                        console.warn(`      ⚠️ Failed to get download URL for "${res.title}": ${response.error}`);
+                    }
+                } catch (err) {
+                    console.warn(`      ⚠️ Error fetching download URL for "${res.title}":`, err);
+                }
+            }
+        }
+
         await page.close();
 
         // Skool stores rich text as a stringified JSON array or primitive HTML
@@ -212,9 +275,13 @@ export class Scraper {
             title: metadata.title || foundLesson?.name || '',
             url: url,
             contentHtml: body,
-            videoLink: vLink
+            videoLink: vLink,
+            resources: resources
         };
     }
+
+    // Helper removed as logic is now in extractLessonData for shared state
+
 
     private parseTipTap(nodes: any[]): string {
         return nodes.map(node => {

@@ -24,19 +24,22 @@ The goal of this project is to provide a robust, platform-independent tool for c
    The `Downloader` class identifies `<img>` tags, downloads the images into a local `assets/` folder, and rewrites the HTML sources before saving.
 6. **Native Video Extraction**:
    Skool's native Mux player requires a "play" click to generate authenticated HLS manifest URLs. The scraper simulates this interaction and monitors performance entries to extract the signed `.m3u8` link.
-7. **High-Performance Downloads**:
+7. **Resource/Attachment Downloads**:
+   Course attachments (PDFs, DOCX, etc.) are downloaded using direct API calls to `https://api2.skool.com/files/{file_id}/download-url?expire=28800`. This is more reliable than DOM interaction and returns signed CloudFront URLs for downloading.
+8. **High-Performance Downloads**:
    The downloader is optimized with `-N 16` for parallel fragment fetching and `ffmpeg` post-processing (`+faststart`) for instant in-browser playback.
 
 ## Project Structure
 - `src/auth.ts`: Handles the manual login flow and cookie conversion.
 - `src/scraper.ts`: Navigates the course tree and parses lesson metadata from Next.js state.
-- `src/downloader.ts`: Wrapper for `yt-dlp` and logic for image localization.
+- `src/downloader.ts`: Wrapper for `yt-dlp` and logic for image localization and resource downloads.
 - `src/index.ts`: CLI entry point, single lesson/full course logic (with URL sanitization), and offline HTML page/index generation.
 - **Single Lesson Extraction**: The tool detects `?md=` or `?lesson=` in the input URL to download only a specific lesson instead of the entire course.
 - **Native Video Handling**: Automates interaction with the Mux player to capture signed tokens.
+- **Resource Downloads**: Uses direct API calls to fetch signed download URLs for attachments, stored in `resources/` folder within each lesson.
 - `bin/`: Stores the platform-specific `yt-dlp` binary.
 
-- **Attachments**: Currently, course attachments (PDFs/DOCX) are identified in `__NEXT_DATA__` (under `course.metadata.resources`) but not yet downloaded. Logic should be added to `src/downloader.ts`.
+
 - **ffmpeg Requirement**: `yt-dlp` requires `ffmpeg` to merge high-quality video and audio streams (especially for YouTube 1080p+). To keep the project platform-independent, consider adding a local `ffmpeg` binary or a managed package like `@ffmpeg-installer/ffmpeg`.
 - **Rate Limiting & Detection**: Skool may implement rate limiting. The current implementation uses a fixed delay between navigations, but for very large courses, further randomization or human-like interaction patterns should be implemented in `scraper.ts`.
 - **Local Chromium**: Playwright currently uses the system cache for browser binaries. For a 100% self-contained folder, configure `PLAYWRIGHT_BROWSERS_PATH=0` in `.env` to force local installation.

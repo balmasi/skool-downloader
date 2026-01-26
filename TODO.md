@@ -7,10 +7,11 @@
     - [x] Ensure signed tokens are passed correctly to `yt-dlp`.
 - [x] **Preserve Module Order**
     - [x] Number the module folders (e.g., `1-Module Name`, `2-Module Name`) for lexicographical sorting.
-- [ ] **Download Course Attachments**
-    - [ ] Parse `course.metadata.resources` from `__NEXT_DATA__`.
-    - [ ] Download PDFs, DOCX, and other files into a `resources/` folder within each lesson.
-    - [ ] Add links to these resources in the generated `index.html`.
+- [x] **Download Course Attachments**
+    - [x] Parse `course.metadata.resources` from `__NEXT_DATA__`.
+    - [x] Download PDFs, DOCX, and other files into a `resources/` folder within each lesson.
+    - [x] Add links to these resources in the generated `index.html`.
+    - [x] Use direct API calls to `https://api2.skool.com/files/{file_id}/download-url` instead of DOM interaction.
 - [x] **Single Lesson Extraction**
     - [x] Accept lesson URLs (with `?md=`) to download only that specific lesson.
 
