@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs-extra';
 import axios from 'axios';
 import { Readable } from 'stream';
+import { createConsoleLogger, type Logger } from './logger.js';
 
 const YTDlpWrap = (YTDlpWrapPkg as any).default || YTDlpWrapPkg;
 
@@ -13,6 +14,11 @@ const COOKIES_TXT_PATH = path.join(process.cwd(), 'cookies.txt');
 export class Downloader {
     private ytDlp: any = null;
     private initPromise: Promise<void> | null = null;
+    private logger: Logger;
+
+    constructor(logger: Logger = createConsoleLogger()) {
+        this.logger = logger;
+    }
 
     async init() {
         if (this.initPromise) return this.initPromise;
@@ -23,7 +29,7 @@ export class Downloader {
             }
 
             if (!fs.existsSync(YTDLP_PATH)) {
-                console.log('Downloading yt-dlp binary locally...');
+                this.logger.info('Downloading yt-dlp binary locally...');
                 await YTDlpWrap.downloadFromGithub(YTDLP_PATH);
                 if (process.platform !== 'win32') {
                     await fs.chmod(YTDLP_PATH, 0o755);
@@ -45,13 +51,13 @@ export class Downloader {
         if (fs.existsSync(outputPath)) {
             const stats = fs.statSync(outputPath);
             if (stats.size > 0) {
-                console.log(`    ⏭️  Video already exists, skipping download (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+                this.logger.info(`    ⏭️  Video already exists, skipping download (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
                 return;
             }
         }
 
         const displayUrl = url.length > 100 ? url.substring(0, 97) + '...' : url;
-        console.log(`    ⬇️  Downloading video from ${displayUrl}`);
+        this.logger.info(`    ⬇️  Downloading video from ${displayUrl}`);
 
         const args = [
             url,
@@ -71,9 +77,9 @@ export class Downloader {
 
         try {
             await this.ytDlp!.execPromise(args);
-            console.log(`Video downloaded successfully to ${outputDir}`);
+            this.logger.info(`Video downloaded successfully to ${outputDir}`);
         } catch (error) {
-            console.error(`Error downloading video: ${error}`);
+            this.logger.error(`Error downloading video: ${String(error)}`);
             throw error;
         }
     }
@@ -130,10 +136,10 @@ export class Downloader {
         }
 
         if (tasks.length > 0) {
-            console.log(`      🖼️  Localizing ${tasks.length} images...`);
+            this.logger.info(`      🖼️  Localizing ${tasks.length} images...`);
             await Promise.all(tasks.map(task => 
                 this.downloadAsset(task.url, task.outputPath).catch(err => 
-                    console.warn(`      ⚠️ Failed to localize image: ${task.url}`)
+                    this.logger.warn(`      ⚠️ Failed to localize image: ${task.url}`)
                 )
             ));
         }

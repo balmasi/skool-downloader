@@ -5,4 +5,4 @@ node_modules/*
 bin/yt-dlp*
 bin/ffmpeg*
 bin/ffprobe*
-!bin/.gitkeep
+

@@ -8,18 +8,21 @@
     "skool": "./bin/skool.js"
   },
   "scripts": {
-    "skool": "tsx src/index.ts",
-    "login": "tsx src/index.ts login",
-    "regenerate-index": "tsx src/regenerate-index.ts",
+    "skool": "tsx src/cli.ts",
+    "login": "tsx src/cli.ts login",
+    "regenerate-index": "tsx src/cli.ts regenerate-index",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@clack/prompts": "^0.11.0",
     "axios": "^1.13.3",
     "fs-extra": "^11.3.3",
+    "listr2": "^10.1.0",
     "p-limit": "^7.2.0",
+    "picocolors": "^1.1.1",
     "playwright": "^1.58.0",
     "yt-dlp-wrap": "^2.3.12"
   },

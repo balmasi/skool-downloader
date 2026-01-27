@@ -38,13 +38,23 @@ async function writeAtomicHtml(filePath: string, content: string) {
  * Regenerates the master index.html by scanning the downloads directory
  * for existing lesson files. Useful for recovering from interrupted downloads.
  */
-async function regenerateIndex(downloadsDir: string = path.join(process.cwd(), 'downloads')) {
+type RegenerateOptions = {
+    silent?: boolean;
+};
+
+async function regenerateIndex(
+    downloadsDir: string = path.join(process.cwd(), 'downloads'),
+    options: RegenerateOptions = {}
+) {
+    const log = options.silent ? () => {} : console.log;
+    const warn = options.silent ? () => {} : console.warn;
+
     if (!fs.existsSync(downloadsDir)) {
-        console.log('❌ Downloads directory not found:', downloadsDir);
+        log(`❌ Downloads directory not found: ${downloadsDir}`);
         return;
     }
 
-    console.log('🔍 Scanning downloads directory:', downloadsDir);
+    log(`🔍 Scanning downloads directory: ${downloadsDir}`);
 
     let courseManifest: CourseManifest | null = null;
     const courseManifestPath = path.join(downloadsDir, '.course.json');
@@ -52,7 +62,7 @@ async function regenerateIndex(downloadsDir: string = path.join(process.cwd(), '
         try {
             courseManifest = await fs.readJson(courseManifestPath);
         } catch (err) {
-            console.warn('⚠️ Failed to read course manifest, falling back to directory names.');
+            warn('⚠️ Failed to read course manifest, falling back to directory names.');
         }
     }
 
@@ -111,7 +121,7 @@ async function regenerateIndex(downloadsDir: string = path.join(process.cwd(), '
                         moduleTitleOverride = manifest.moduleTitle || null;
                         moduleIndexOverride = manifest.moduleIndex ?? null;
                     } catch (err) {
-                        console.warn(`⚠️ Failed to read manifest for ${lessonDir.name}, using directory data.`);
+                        warn(`⚠️ Failed to read manifest for ${lessonDir.name}, using directory data.`);
                     }
                 }
 
@@ -361,9 +371,9 @@ async function regenerateIndex(downloadsDir: string = path.join(process.cwd(), '
     // Write the index file
     await writeAtomicHtml(path.join(downloadsDir, 'index.html'), indexHtml);
 
-    console.log('\n✅ Index regenerated successfully!');
-    console.log(`📊 Found ${courseInfo.length} modules with ${courseInfo.reduce((acc, m) => acc + m.lessons.length, 0)} lessons total`);
-    console.log(`📁 Saved to: ${path.join(downloadsDir, 'index.html')}`);
+    log('\n✅ Index regenerated successfully!');
+    log(`📊 Found ${courseInfo.length} modules with ${courseInfo.reduce((acc, m) => acc + m.lessons.length, 0)} lessons total`);
+    log(`📁 Saved to: ${path.join(downloadsDir, 'index.html')}`);
 }
 
 // Run if called directly

@@ -1,6 +1,7 @@
 import { chromium, type Browser, type BrowserContext } from 'playwright';
 import fs from 'fs-extra';
 import path from 'path';
+import { createConsoleLogger, type Logger } from './logger.js';
 
 const STORAGE_STATE_PATH = path.join(process.cwd(), 'storage_state.json');
 
@@ -39,6 +40,11 @@ export interface ClassroomResult {
 export class Scraper {
     private browser: Browser | null = null;
     private context: BrowserContext | null = null;
+    private logger: Logger;
+
+    constructor(logger: Logger = createConsoleLogger()) {
+        this.logger = logger;
+    }
 
     async init() {
         this.browser = await chromium.launch({ headless: true });
@@ -59,7 +65,7 @@ export class Scraper {
 
         // Ensure we are using a clean classroom URL without query params for structure extraction
         const cleanUrl = url.split('?')[0]!;
-        console.log(`Navigating to ${cleanUrl}...`);
+        this.logger.info(`Navigating to ${cleanUrl}...`);
         await page.goto(cleanUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await page.waitForTimeout(2000);
 
@@ -76,7 +82,7 @@ export class Scraper {
         const courseData = pageProps.course;
 
         if (!courseData || !courseData.children) {
-            console.log('DEBUG: course metadata:', courseData?.course?.metadata);
+            this.logger.debug(`DEBUG: course metadata: ${JSON.stringify(courseData?.course?.metadata ?? {})}`);
             throw new Error('Course structure not found in __NEXT_DATA__');
         }
 
@@ -121,7 +127,7 @@ export class Scraper {
                 foundCourse?.metadata?.coverSmallUrl;
         }
 
-        console.log(`\x1b[32m%s\x1b[0m`, `🎓 Course detected: ${courseName}`);
+        this.logger.info(`🎓 Course detected: ${courseName}`);
 
         // Skool Hierarchy:
         // Set (Module Group) -> Children (Modules/Lessons)
@@ -200,7 +206,7 @@ export class Scraper {
 
         // Native Skool Player Handling (Mux)
         if (!vLink && metadata.videoId) {
-            console.log(`    ℹ️ Native videoId found: ${metadata.videoId}.`);
+            this.logger.info(`    ℹ️ Native videoId found: ${metadata.videoId}.`);
 
             try {
                 // Try to find and click the play button/thumbnail to trigger stream signed URL generation
@@ -208,7 +214,7 @@ export class Scraper {
                 const hasPlayButton = await page.evaluate((sel) => !!document.querySelector(sel), playButtonSelector);
 
                 if (hasPlayButton) {
-                    console.log('    🖱️ Clicking play button to initialize stream...');
+                    this.logger.info('    🖱️ Clicking play button to initialize stream...');
                     await page.click(playButtonSelector);
 
                     // Poll for the stream manifest to appear in network entries or player src
@@ -247,12 +253,12 @@ export class Scraper {
                 if (!vLink) {
                     const videoData = pageProps.video || pageProps.course?.video;
                     if (videoData && videoData.id === metadata.videoId && videoData.playbackId && videoData.playbackToken) {
-                        console.log('    ℹ️ Using reconstructed HLS URL from page props fallback.');
+                        this.logger.info('    ℹ️ Using reconstructed HLS URL from page props fallback.');
                         vLink = `https://stream.video.skool.com/${videoData.playbackId}.m3u8?token=${videoData.playbackToken}`;
                     }
                 }
             } catch (err) {
-                console.warn('    ⚠️ Interaction-based extraction failed:', err);
+                this.logger.warn(`    ⚠️ Interaction-based extraction failed: ${String(err)}`);
             }
         }
 
@@ -280,7 +286,7 @@ export class Scraper {
             });
 
         } catch (e) {
-            console.warn('    ⚠️ Failed to parse metadata resources', e);
+            this.logger.warn(`    ⚠️ Failed to parse metadata resources: ${String(e)}`);
         }
 
         // 2. Scrape from DOM to catch external links and any native missing from metadata
@@ -325,12 +331,12 @@ export class Scraper {
                 }
             }
         } catch (err) {
-            console.warn('    ⚠️ DOM-based resource scraping failed:', err);
+            this.logger.warn(`    ⚠️ DOM-based resource scraping failed: ${String(err)}`);
         }
 
         // Fetch download URLs for each native resource using direct API calls
         if (resources.length > 0) {
-            console.log(`    📥 Found ${resources.length} resources. Fetching download URLs...`);
+            this.logger.info(`    📥 Found ${resources.length} resources. Fetching download URLs...`);
 
             for (const res of resources) {
                 // Skip if it's already an external link or already has a download URL
@@ -339,7 +345,7 @@ export class Scraper {
                 }
 
                 try {
-                    console.log(`      🔗 Requesting download URL for "${res.title}"...`);
+                    this.logger.info(`      🔗 Requesting download URL for "${res.title}"...`);
                     const response = await page.evaluate(async (fileId: string) => {
                         const apiUrl = `https://api2.skool.com/files/${fileId}/download-url?expire=28800`;
                         try {
@@ -357,12 +363,12 @@ export class Scraper {
 
                     if (response.success && response.url) {
                         res.downloadUrl = response.url;
-                        console.log(`      ✅ Got download URL for "${res.title}"`);
+                        this.logger.info(`      ✅ Got download URL for "${res.title}"`);
                     } else {
-                        console.warn(`      ⚠️ Failed to get download URL for "${res.title}": ${response.error}`);
+                        this.logger.warn(`      ⚠️ Failed to get download URL for "${res.title}": ${response.error}`);
                     }
                 } catch (err) {
-                    console.warn(`      ⚠️ Error fetching download URL for "${res.title}":`, err);
+                    this.logger.warn(`      ⚠️ Error fetching download URL for "${res.title}": ${String(err)}`);
                 }
             }
         }
@@ -379,7 +385,7 @@ export class Scraper {
                 const nodes = JSON.parse(jsonPart);
                 body = this.parseTipTap(nodes);
             } catch (e) {
-                console.error('Failed to parse TipTap content', e);
+                this.logger.error(`Failed to parse TipTap content: ${String(e)}`);
             }
         }
 
