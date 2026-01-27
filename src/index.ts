@@ -265,7 +265,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
         const defaultOutputDir = path.join(
             process.cwd(),
             'downloads',
-            `${sanitizedGroupName} - ${sanitizedCourseName}`,
+            sanitizedGroupName,
             sanitizedCourseName
         );
 
