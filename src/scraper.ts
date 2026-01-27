@@ -32,6 +32,7 @@ export interface Module {
 export interface ClassroomResult {
     groupName: string;
     courseName: string;
+    courseImageUrl?: string;
     modules: Module[];
 }
 
@@ -100,6 +101,26 @@ export class Scraper {
             }
         }
 
+        // Extract Course Image
+        let courseImageUrl: string | undefined =
+            courseData.metadata?.coverImage ||
+            courseData.metadata?.image ||
+            courseData.metadata?.coverSmallUrl ||
+            courseData.course?.metadata?.coverImage ||
+            courseData.course?.metadata?.image ||
+            courseData.course?.metadata?.coverSmallUrl;
+
+        if (!courseImageUrl) {
+            const urlParts = cleanUrl.split('/');
+            const urlCourseHandle = urlParts[urlParts.length - 1];
+            const allCourses = pageProps.allCourses || pageProps.renderData?.allCourses || [];
+            const foundCourse = allCourses.find((c: any) => c.name === urlCourseHandle || c.id === courseData?.id);
+            courseImageUrl =
+                foundCourse?.metadata?.coverImage ||
+                foundCourse?.metadata?.image ||
+                foundCourse?.metadata?.coverSmallUrl;
+        }
+
         console.log(`\x1b[32m%s\x1b[0m`, `🎓 Course detected: ${courseName}`);
 
         // Skool Hierarchy:
@@ -126,6 +147,7 @@ export class Scraper {
         return {
             groupName,
             courseName,
+            courseImageUrl,
             modules: modules.filter(m => m.lessons.length > 0)
         };
     }

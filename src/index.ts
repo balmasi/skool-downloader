@@ -15,6 +15,74 @@ const CONCURRENCY = 8;
 // indexLimit: A serial queue (concurrency = 1) for file system operations 
 // that shouldn't happen in parallel, specifically writing the master index.html.
 const indexLimit = pLimit(1);
+let activeOutputDir: string | null = null;
+let shutdownHandlersRegistered = false;
+
+function registerShutdownHandlers() {
+    if (shutdownHandlersRegistered) return;
+    shutdownHandlersRegistered = true;
+
+    const handleShutdown = async (signal: string) => {
+        if (!activeOutputDir) {
+            process.exit(0);
+            return;
+        }
+        console.log(`\n🛑 Caught ${signal}. Regenerating index before exit...`);
+        try {
+            await regenerateIndex(activeOutputDir);
+        } catch (err) {
+            console.error('⚠️ Failed to regenerate index during shutdown:', err);
+        } finally {
+            process.exit(0);
+        }
+    };
+
+    process.once('SIGINT', () => { void handleShutdown('SIGINT'); });
+    process.once('SIGTERM', () => { void handleShutdown('SIGTERM'); });
+}
+
+type CourseManifest = {
+    courseName: string;
+    groupName: string;
+    courseImageUrl?: string;
+    courseImagePath?: string;
+    modules: Array<{
+        index: number;
+        title: string;
+        moduleDirName: string;
+    }>;
+    updatedAt: string;
+};
+
+type LessonManifest = {
+    lessonId: string;
+    title: string;
+    moduleIndex: number;
+    moduleTitle: string;
+    lessonIndex: number;
+    moduleDirName: string;
+    lessonDirName: string;
+    relativePath: string;
+    hasVideo: boolean;
+    resourcesCount: number;
+    updatedAt: string;
+};
+
+async function writeAtomicJson(filePath: string, data: unknown) {
+    const tempPath = `${filePath}.tmp`;
+    await fs.writeJson(tempPath, data, { spaces: 2 });
+    await fs.move(tempPath, filePath, { overwrite: true });
+}
+
+function getUrlExtension(url: string) {
+    try {
+        const ext = path.extname(new URL(url).pathname);
+        if (ext && ext.length <= 5) return ext;
+    } catch (err) {
+        // Ignore parsing errors, fallback below.
+    }
+    return '.jpg';
+}
 
 async function main() {
     const args = process.argv.slice(2);
@@ -55,7 +123,7 @@ async function main() {
 
     try {
         console.log('\x1b[33m%s\x1b[0m', '🚀 Fetching course structure...');
-        let { modules, courseName, groupName } = await scraper.parseClassroom(classroomUrl);
+        let { modules, courseName, groupName, courseImageUrl } = await scraper.parseClassroom(classroomUrl);
 
         if (modules.length === 0) {
             console.log('\x1b[31m%s\x1b[0m', '❌ No modules found. Are you sure this is a classroom URL and you are logged in?');
@@ -67,6 +135,8 @@ async function main() {
         // Structure: downloads/Group - Course/Course/Module/Lesson
         const baseOutputDir = args[1] || path.join(process.cwd(), 'downloads', `${sanitizedGroupName} - ${sanitizedCourseName}`, sanitizedCourseName);
         await fs.ensureDir(baseOutputDir);
+        activeOutputDir = baseOutputDir;
+        registerShutdownHandlers();
 
         // Handle single lesson mode
         if (targetLessonId) {
@@ -91,13 +161,43 @@ async function main() {
             console.log('\x1b[32m%s\x1b[0m', `✅ Found ${modules.length} modules.`);
         }
 
-        const courseInfo: any[] = modules.map(m => ({ 
-            title: m.title, 
-            lessons: [] as any[], 
+        const courseInfo: any[] = modules.map(m => ({
+            title: m.title,
+            lessons: [] as any[],
             totalLessons: m.lessons.length,
             mIndex: m.index,
             moduleDirName: `${m.index}-${m.title.replace(/[/\\?%*:|"<>]/g, '-')}`
         }));
+
+        let courseImagePath: string | undefined;
+        if (courseImageUrl) {
+            try {
+                const assetsDir = path.join(baseOutputDir, 'assets');
+                await fs.ensureDir(assetsDir);
+                const ext = getUrlExtension(courseImageUrl);
+                const localName = `course-cover${ext}`;
+                const localPath = path.join(assetsDir, localName);
+                await downloader.downloadAsset(courseImageUrl, localPath);
+                courseImagePath = `assets/${localName}`;
+            } catch (err) {
+                console.warn('⚠️ Failed to download course image, continuing without it.');
+            }
+        }
+
+        const courseManifest: CourseManifest = {
+            courseName,
+            groupName,
+            courseImageUrl,
+            courseImagePath,
+            modules: courseInfo.map(m => ({
+                index: m.mIndex,
+                title: m.title,
+                moduleDirName: m.moduleDirName
+            })),
+            updatedAt: new Date().toISOString()
+        };
+
+        await writeAtomicJson(path.join(baseOutputDir, '.course.json'), courseManifest);
 
         const limit = pLimit(CONCURRENCY);
         const tasks: any[] = [];
@@ -183,46 +283,112 @@ async function main() {
                             <html>
                             <head>
                                 <meta charset="UTF-8">
+                                <meta name="viewport" content="width=device-width, initial-scale=1">
                                 <title>${lessonData.title}</title>
                                 <style>
-                                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #333; background: #f9f9f9; }
-                                    .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-                                    h1 { border-bottom: 2px solid #eee; padding-bottom: 10px; color: #111; }
-                                    video { max-width: 100%; border-radius: 8px; margin-bottom: 30px; display: block; box-shadow: 0 8px 16px rgba(0,0,0,0.1); background: #000; }
-                                    img { max-width: 100%; border-radius: 4px; height: auto; margin: 10px 0; }
-                                    .content { font-size: 18px; margin-bottom: 30px; }
-                                    .content p { margin-bottom: 1.5em; }
-                                    .resources { background: #f0f7ff; padding: 20px; border-radius: 8px; border: 1px solid #d0e7ff; margin-top: 30px; }
-                                    .resources h3 { margin-top: 0; color: #0056b3; }
-                                    .resources ul { list-style: none; padding: 0; margin: 0; }
-                                    .resources li { margin-bottom: 10px; }
-                                    .resources li:last-child { margin-bottom: 0; }
-                                    .resources a { color: #0056b3; font-weight: 500; display: flex; align-items: center; }
-                                    .resources a::before { content: "📁"; margin-right: 8px; }
-                                    a { color: #5a1cb5; text-decoration: none; word-break: break-all; }
+                                    :root {
+                                        --bg: #f6f3ee;
+                                        --panel: #ffffff;
+                                        --panel-2: #f6f7fb;
+                                        --text: #14161d;
+                                        --muted: #5b6271;
+                                        --accent: #f28c28;
+                                        --ring: rgba(20,22,29,0.08);
+                                        --shadow: 0 16px 32px rgba(15, 23, 42, 0.12);
+                                    }
+                                    * { box-sizing: border-box; }
+                                    body {
+                                        margin: 0;
+                                        font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
+                                        background:
+                                            radial-gradient(900px 500px at 0% -10%, rgba(242,140,40,0.18), transparent),
+                                            radial-gradient(900px 600px at 100% 0%, rgba(37,99,235,0.12), transparent),
+                                            var(--bg);
+                                        color: var(--text);
+                                        line-height: 1.7;
+                                    }
+                                    .page { max-width: 980px; margin: 48px auto 80px; padding: 0 22px; }
+                                    .breadcrumb {
+                                        font-size: 0.95rem;
+                                        color: var(--muted);
+                                        margin-bottom: 16px;
+                                        display: flex;
+                                        flex-wrap: wrap;
+                                        gap: 8px;
+                                        align-items: center;
+                                    }
+                                    .breadcrumb a { color: var(--accent); text-decoration: none; font-weight: 600; }
+                                    .breadcrumb span { color: var(--muted); }
+                                    .container {
+                                        background: var(--panel);
+                                        padding: 32px;
+                                        border-radius: 18px;
+                                        border: 1px solid var(--ring);
+                                        box-shadow: var(--shadow);
+                                    }
+                                    h1 { margin: 0 0 16px 0; font-size: clamp(1.8rem, 3vw, 2.6rem); }
+                                    video {
+                                        width: 100%;
+                                        border-radius: 14px;
+                                        margin: 10px 0 26px;
+                                        display: block;
+                                        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.2);
+                                        background: #000;
+                                    }
+                                    img { max-width: 100%; border-radius: 10px; height: auto; margin: 14px 0; }
+                                    .content { font-size: 1.05rem; }
+                                    .content p { margin-bottom: 1.2em; }
+                                    .resources {
+                                        background: var(--panel-2);
+                                        padding: 18px;
+                                        border-radius: 14px;
+                                        border: 1px solid var(--ring);
+                                        margin-top: 28px;
+                                    }
+                                    .resources h3 { margin: 0 0 10px 0; color: #1f3d7a; }
+                                    .resources ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+                                    .resources a {
+                                        color: #1f3d7a;
+                                        font-weight: 600;
+                                        display: inline-flex;
+                                        align-items: center;
+                                        gap: 8px;
+                                        text-decoration: none;
+                                    }
+                                    .resources a::before { content: "📁"; }
+                                    a { color: #1f3d7a; text-decoration: none; word-break: break-word; }
                                     a:hover { text-decoration: underline; }
-                                    .breadcrumb { font-size: 14px; color: #888; margin-bottom: 20px; }
-                                    .nav { margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; }
+                                    .nav { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--ring); }
                                 </style>
                             </head>
                             <body>
-                                <div class="breadcrumb"><a href="../../index.html">Course</a> / ${module.title} / ${lessonData.title}</div>
-                                <div class="container">
-                                    <h1>${lessonData.title}</h1>
-                                    ${hasVideo ? '<video controls src="video.mp4"></video>' : ''}
-                                    <div class="content">
-                                        ${localizedHtml}
+                                <div class="page">
+                                    <div class="breadcrumb">
+                                        <a href="../../index.html">${groupName}</a>
+                                        <span>/</span>
+                                        <a href="../../index.html">${courseName}</a>
+                                        <span>/</span>
+                                        <span>${module.title}</span>
+                                        <span>/</span>
+                                        <span>${lessonData.title}</span>
                                     </div>
-                                    ${resourcesHtml.length > 0 ? `
-                                    <div class="resources">
-                                        <h3>Resources / Attachments</h3>
-                                        <ul>
-                                            ${resourcesHtml.join('')}
-                                        </ul>
-                                    </div>
-                                    ` : ''}
-                                    <div class="nav">
-                                        <a href="../../index.html">← Back to Course Index</a>
+                                    <div class="container">
+                                        <h1>${lessonData.title}</h1>
+                                        ${hasVideo ? '<video controls src="video.mp4"></video>' : ''}
+                                        <div class="content">
+                                            ${localizedHtml}
+                                        </div>
+                                        ${resourcesHtml.length > 0 ? `
+                                        <div class="resources">
+                                            <h3>Resources / Attachments</h3>
+                                            <ul>
+                                                ${resourcesHtml.join('')}
+                                            </ul>
+                                        </div>
+                                        ` : ''}
+                                        <div class="nav">
+                                            <a href="../../index.html">Back to Course Index</a>
+                                        </div>
                                     </div>
                                 </div>
                             </body>
@@ -230,17 +396,23 @@ async function main() {
                         `;
 
                         await fs.writeFile(path.join(lessonDir, 'index.html'), htmlContent);
-                        
-                        // Thread-safe update of courseInfo
-                        mInfo.lessons.push({ 
-                            index: lIndex,
-                            title: lesson.title, 
-                            path: `${mInfo.moduleDirName}/${lessonDirName}/index.html` 
-                        });
-                        
-                        // Sort lessons by index to maintain order in the final index
-                        mInfo.lessons.sort((a: any, b: any) => a.index - b.index);
 
+                        const lessonManifest: LessonManifest = {
+                            lessonId: lesson.id,
+                            title: lesson.title,
+                            moduleIndex: mInfo.mIndex,
+                            moduleTitle: mInfo.title,
+                            lessonIndex: lIndex,
+                            moduleDirName: mInfo.moduleDirName,
+                            lessonDirName,
+                            relativePath: `${mInfo.moduleDirName}/${lessonDirName}/index.html`,
+                            hasVideo,
+                            resourcesCount: resourcesHtml.length,
+                            updatedAt: new Date().toISOString()
+                        };
+
+                        await writeAtomicJson(path.join(lessonDir, 'lesson.json'), lessonManifest);
+                        
                         // Use a serial queue for index regeneration to prevent race 
                         // conditions where multiple lessons try to write to index.html at once.
                         indexLimit(() => regenerateIndex(baseOutputDir));
@@ -254,41 +426,7 @@ async function main() {
 
         await Promise.all(tasks);
 
-        // Generate Master Index (final version)
-        const indexHtml = `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <title>${courseName} (${groupName}) - Backup</title>
-                <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 60px auto; padding: 20px; line-height: 1.6; color: #333; background: #f4f7f9; }
-                    .card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-                    h1 { color: #111; margin: 0; display: inline-block; }
-                    .group-name { color: #666; font-size: 1.2em; margin-bottom: 30px; border-bottom: 3px solid #5a1cb5; padding-bottom: 10px; }
-                    h2 { margin-top: 30px; font-size: 1.4em; color: #444; border-left: 4px solid #5a1cb5; padding-left: 15px; }
-                    ul { list-style: none; padding: 0; }
-                    li { margin-bottom: 10px; padding-left: 20px; position: relative; }
-                    li::before { content: "•"; color: #5a1cb5; position: absolute; left: 0; font-weight: bold; }
-                    a { color: #5a1cb5; text-decoration: none; font-size: 1.1em; }
-                    a:hover { color: #3d137b; text-decoration: underline; }
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <h1>${courseName}</h1>
-                    <div class="group-name">${groupName}</div>
-                    ${courseInfo.map(m => `
-                        <h2>${m.title}</h2>
-                        <ul>
-                            ${m.lessons.map((l: any) => `<li><a href="${l.path}">${l.title}</a></li>`).join('')}
-                        </ul>
-                    `).join('')}
-                </div>
-            </body>
-            </html>
-        `;
-        await fs.writeFile(path.join(baseOutputDir, 'index.html'), indexHtml);
+        await indexLimit(() => regenerateIndex(baseOutputDir));
 
         console.log('\n\x1b[32m%s\x1b[0m', '✨ All downloads complete!');
         console.log(`Check your files in: ${baseOutputDir}`);
