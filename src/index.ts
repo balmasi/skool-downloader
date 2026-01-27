@@ -64,7 +64,8 @@ async function main() {
 
         const sanitizedGroupName = groupName.replace(/[/\\?%*:|"<>]/g, '-');
         const sanitizedCourseName = courseName.replace(/[/\\?%*:|"<>]/g, '-');
-        const baseOutputDir = args[1] || path.join(process.cwd(), 'downloads', `${sanitizedGroupName} - ${sanitizedCourseName}`);
+        // Structure: downloads/Group - Course/Course/Module/Lesson
+        const baseOutputDir = args[1] || path.join(process.cwd(), 'downloads', `${sanitizedGroupName} - ${sanitizedCourseName}`, sanitizedCourseName);
         await fs.ensureDir(baseOutputDir);
 
         // Handle single lesson mode

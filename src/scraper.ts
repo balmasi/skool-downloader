@@ -382,6 +382,35 @@ export class Scraper {
             if (node.type === 'hardBreak') {
                 return '<br/>';
             }
+            if (node.type === 'bulletList') {
+                return `<ul>${this.parseTipTap(node.content)}</ul>`;
+            }
+            if (node.type === 'orderedList') {
+                return `<ol>${this.parseTipTap(node.content)}</ol>`;
+            }
+            if (node.type === 'listItem') {
+                return `<li>${this.parseTipTap(node.content)}</li>`;
+            }
+            if (node.type === 'heading') {
+                const level = node.attrs?.level || 2;
+                return `<h${level}>${this.parseTipTapContent(node.content)}</h${level}>`;
+            }
+            if (node.type === 'image' || node.type === 'image-block' || (node.attrs && node.attrs.src)) {
+                 const src = node.attrs.src || node.attrs.url || node.attrs.originalSrc;
+                 const alt = node.attrs.alt || '';
+                 if (src) {
+                    return `<img src="${src}" alt="${alt}" />`;
+                 }
+            }
+            if (node.type === 'blockquote') {
+                 return `<blockquote>${this.parseTipTap(node.content)}</blockquote>`;
+            }
+
+            // Fallback for nested content in unknown blocks
+            if (node.content) {
+                return `<div>${this.parseTipTap(node.content)}</div>`;
+            }
+
             return '';
         }).join('');
     }
