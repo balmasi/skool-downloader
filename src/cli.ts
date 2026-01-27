@@ -1,4 +1,4 @@
-import { intro, outro, select, text, confirm, spinner, isCancel, cancel, log } from '@clack/prompts';
+import { intro, outro, select, text, confirm, spinner, isCancel, cancel, log, multiselect } from '@clack/prompts';
 import pc from 'picocolors';
 import path from 'path';
 import fs from 'fs-extra';
@@ -7,6 +7,7 @@ import { downloadCourse, type DownloadMode } from './index.js';
 import { login, getAuthStatus } from './auth.js';
 import { regenerateIndex } from './regenerate-index.js';
 import { regenerateGroupIndex } from './regenerate-group-index.js';
+import { Scraper, type CourseLibraryResult, type CourseListItem } from './scraper.js';
 import type { Logger } from './logger.js';
 
 type CliArgs = {
@@ -20,7 +21,7 @@ type CliArgs = {
 };
 
 function showHelp() {
-    console.log(`\nSkool Downloader\n\nUsage:\n  skool                          Interactive mode\n  skool login                    Log in to Skool\n  skool <classroom-url>          Download a course\n  skool <lesson-url>             Download a single lesson (URL with ?md=)\n  skool regenerate-index         Regenerate all course indexes\n\nOptions:\n  -o, --output <dir>             Output directory (course root)\n  -c, --concurrency <number>     Lesson concurrency (default: 8)\n  --course                       Force course mode (ignore ?md=)\n  --lesson                       Force lesson mode\n  --lesson-id <id>               Explicit lesson id\n  -h, --help                     Show help\n`);
+    console.log(`\nSkool Downloader\n\nUsage:\n  skool                          Interactive mode\n  skool login                    Log in to Skool\n  skool <classroom-url>          Download a course\n  skool <group-classroom-url>    Download all courses in a community\n  skool <lesson-url>             Download a single lesson (URL with ?md=)\n  skool regenerate-index         Regenerate all course indexes\n\nOptions:\n  -o, --output <dir>             Output directory (course root)\n  -c, --concurrency <number>     Lesson concurrency (default: 8)\n  --course                       Force course mode (ignore ?md=)\n  --lesson                       Force lesson mode\n  --lesson-id <id>               Explicit lesson id\n  -h, --help                     Show help\n`);
 }
 
 function parseArgs(args: string[]): CliArgs {
@@ -103,6 +104,21 @@ function formatExpiry(expiresAt?: Date) {
     return expiresAt.toLocaleString();
 }
 
+function sanitizeName(value: string) {
+    return value.replace(/[/\\?%*:|"<>]/g, '-');
+}
+
+function isClassroomRootUrl(value: string) {
+    try {
+        const url = new URL(value);
+        const parts = url.pathname.split('/').filter(Boolean);
+        const classroomIndex = parts.indexOf('classroom');
+        return classroomIndex !== -1 && classroomIndex === parts.length - 1;
+    } catch {
+        return false;
+    }
+}
+
 async function ensureLogin(): Promise<boolean> {
     const status = await getAuthStatus();
     if (status.status === 'valid') {
@@ -135,6 +151,67 @@ async function ensureLogin(): Promise<boolean> {
     return false;
 }
 
+function createTaskRunner() {
+    return async (tasks: { title: string; run: (onStatus?: (message: string) => void) => Promise<void> }[], concurrency: number) => {
+        const list = new Listr(
+            tasks.map((entry) => ({
+                title: entry.title,
+                task: async (_ctx, task) => {
+                    task.output = 'Starting...';
+                    await entry.run((message) => {
+                        if (message) task.output = message;
+                    });
+                }
+            })),
+            {
+                concurrent: concurrency,
+                exitOnError: false,
+                rendererOptions: {
+                    timer: PRESET_TIMER,
+                    collapseErrors: false,
+                    collapseSubtasks: false
+                }
+            }
+        );
+
+        await list.run();
+    };
+}
+
+async function fetchCourseLibrary(url: string, logger: Logger): Promise<CourseLibraryResult> {
+    const scraper = new Scraper(logger);
+    try {
+        return await scraper.parseCourseLibrary(url);
+    } finally {
+        await scraper.close();
+    }
+}
+
+function buildCourseHint(course: CourseListItem) {
+    const parts: string[] = [];
+    if (course.numModules) {
+        parts.push(`${course.numModules} modules`);
+    }
+    if (course.hasAccess === false) {
+        parts.push('locked');
+    }
+    if (course.privacy === 1) {
+        parts.push('private');
+    }
+    return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
+function filterAccessibleCourses(courses: CourseListItem[]) {
+    const isLocked = (course: CourseListItem) => course.hasAccess === false || (course.privacy ?? 0) > 0;
+    const accessible = courses.filter(course => !isLocked(course));
+    const locked = courses.filter(course => isLocked(course));
+    return { accessible, locked };
+}
+
+function resolveCourseOutputDir(outputRoot: string, groupName: string, courseName: string) {
+    return path.join(outputRoot, sanitizeName(groupName), sanitizeName(courseName));
+}
+
 async function runInteractive() {
     intro(pc.cyan('Skool Downloader'));
 
@@ -142,6 +219,7 @@ async function runInteractive() {
         message: 'What would you like to do?',
         options: [
             { value: 'download-course', label: 'Download a full course' },
+            { value: 'download-multi', label: 'Download multiple courses' },
             { value: 'download-lesson', label: 'Download a single lesson' },
             { value: 'login', label: 'Log in to Skool' },
             { value: 'regenerate-index', label: 'Regenerate all course indexes' },
@@ -149,7 +227,7 @@ async function runInteractive() {
         ]
     });
     handleCancel(action);
-    const actionValue = action as 'download-course' | 'download-lesson' | 'login' | 'regenerate-index' | 'exit';
+    const actionValue = action as 'download-course' | 'download-multi' | 'download-lesson' | 'login' | 'regenerate-index' | 'exit';
 
     if (actionValue === 'exit') {
         outro('See you next time.');
@@ -177,21 +255,8 @@ async function runInteractive() {
         return;
     }
 
-    const urlInput = await text({
-        message: actionValue === 'download-course' ? 'Course classroom URL' : 'Lesson URL (with ?md=...)',
-        placeholder: 'https://www.skool.com/community/classroom/abcdef',
-        validate(value) {
-            if (!value || !value.startsWith('http')) return 'Please enter a valid URL.';
-            return undefined;
-        }
-    });
-    handleCancel(urlInput);
-    const url = String(urlInput);
-
-    const lessonId: string | null = null;
-
     let concurrency = 8;
-    if (actionValue === 'download-course') {
+    if (actionValue === 'download-course' || actionValue === 'download-multi') {
         const concurrencyChoice = await select({
             message: 'Lesson concurrency',
             options: [
@@ -206,39 +271,136 @@ async function runInteractive() {
         concurrency = Number(concurrencyChoice);
     }
 
+    const interactiveLogger = buildInteractiveLogger();
+    const runTasks = createTaskRunner();
+
+    if (actionValue === 'download-multi') {
+        const urlInput = await text({
+            message: 'Community classroom URL',
+            placeholder: 'https://www.skool.com/community/classroom',
+            validate(value) {
+                if (!value || !value.startsWith('http')) return 'Please enter a valid URL.';
+                return undefined;
+            }
+        });
+        handleCancel(urlInput);
+        const url = String(urlInput);
+
+        const outputDir = await text({
+            message: 'Custom output directory (leave empty for default downloads/)',
+            placeholder: path.join(process.cwd(), 'downloads')
+        });
+        handleCancel(outputDir);
+        const outputDirValue = typeof outputDir === 'string' ? outputDir.trim() : '';
+        const outputRoot = outputDirValue.length > 0 ? outputDirValue : undefined;
+
+        const librarySpinner = spinner();
+        librarySpinner.start('Fetching courses...');
+        let library: CourseLibraryResult;
+        try {
+            library = await fetchCourseLibrary(url, interactiveLogger);
+            librarySpinner.stop(`Found ${library.courses.length} courses.`);
+        } catch (err) {
+            librarySpinner.stop('Failed to fetch courses.');
+            log.error(`Unable to load course list: ${String(err)}`);
+            outro('Could not fetch courses.');
+            return;
+        }
+
+        const { accessible, locked } = filterAccessibleCourses(library.courses);
+        if (accessible.length === 0) {
+            log.warn('No accessible courses found to download.');
+            outro('Nothing to download.');
+            return;
+        }
+
+        if (locked.length > 0) {
+            log.warn(`Locked courses (no access):`);
+            for (const course of locked) {
+                log.warn(`  🔒 ${course.title}`);
+            }
+        }
+
+        const courseOptions = accessible.map(course => ({
+            value: course.key,
+            label: course.title,
+            hint: buildCourseHint(course)
+        }));
+
+        const accessibleKeys = new Set(accessible.map(course => course.key));
+
+        const selection = await multiselect({
+            message: 'Select courses to download',
+            options: courseOptions,
+            initialValues: courseOptions.map(option => option.value).filter(key => accessibleKeys.has(key))
+        });
+        handleCancel(selection);
+
+        const selectedKeys = new Set(selection as string[]);
+        const selectedCourses = accessible.filter(course => selectedKeys.has(course.key));
+
+        if (selectedCourses.length === 0) {
+            log.warn('No courses selected.');
+            outro('Nothing to download.');
+            return;
+        }
+
+        let failedCourses = 0;
+
+        for (const course of selectedCourses) {
+            log.info(`\n${pc.bold(course.title)} ${pc.dim(`· ${library.groupName}`)}`);
+            try {
+                const summary = await downloadCourse({
+                    url: course.url,
+                    outputDir: outputRoot ? resolveCourseOutputDir(outputRoot, library.groupName, course.title) : undefined,
+                    concurrency,
+                    mode: 'course',
+                    logger: interactiveLogger,
+                    suppressIndexLogs: true,
+                    runTasks,
+                    callbacks: {
+                        onCourseStart: ({ modulesCount, lessonsCount, outputDir: resolvedDir }) => {
+                            log.info(`${modulesCount} modules · ${lessonsCount} lessons`);
+                            log.info(`Course will save to: ${resolvedDir}`);
+                        }
+                    }
+                });
+
+                if (summary.failedLessons > 0) {
+                    log.warn(`${summary.failedLessons} lessons had errors. You can rerun the download to fill gaps.`);
+                }
+            } catch (err) {
+                failedCourses += 1;
+                log.error(`Failed to download course ${course.title}: ${String(err)}`);
+            }
+        }
+
+        if (failedCourses > 0) {
+            log.warn(`${failedCourses} courses failed. You can rerun to fill gaps.`);
+        }
+
+        outro('All selected courses processed.');
+        return;
+    }
+
+    const urlInput = await text({
+        message: actionValue === 'download-course' ? 'Course classroom URL' : 'Lesson URL (with ?md=...)',
+        placeholder: 'https://www.skool.com/community/classroom/abcdef',
+        validate(value) {
+            if (!value || !value.startsWith('http')) return 'Please enter a valid URL.';
+            return undefined;
+        }
+    });
+    handleCancel(urlInput);
+    const url = String(urlInput);
+
     const outputDir = await text({
         message: 'Custom output directory (leave empty for default)',
         placeholder: path.join(process.cwd(), 'downloads')
     });
     handleCancel(outputDir);
 
-    const interactiveLogger = buildInteractiveLogger();
-
-    const runTasks = async (tasks: { title: string; run: (onStatus?: (message: string) => void) => Promise<void> }[], concurrency: number) => {
-        const list = new Listr(
-            tasks.map((entry) => ({
-                title: entry.title,
-                task: async (_ctx, task) => {
-                    task.output = 'Starting...';
-                    await entry.run((message) => {
-                        if (message) task.output = message;
-                    });
-                }
-            })),
-            {
-                concurrent: concurrency,
-                exitOnError: false,
-                rendererOptions: {
-                    timer: PRESET_TIMER,
-                    collapseErrors: false,
-                    collapseSubtasks: false
-                }
-            }
-        );
-
-        await list.run();
-    };
-
+    const lessonId: string | null = null;
     const outputDirValue = typeof outputDir === 'string' ? outputDir.trim() : '';
 
     const summary = await downloadCourse({
@@ -341,6 +503,42 @@ async function runWithArgs(args: CliArgs) {
             console.log('Login required. Exiting.');
             return;
         }
+        if (isClassroomRootUrl(args.url)) {
+            const logger = buildInteractiveLogger();
+            const library = await fetchCourseLibrary(args.url, logger);
+            const outputRoot = args.outputDir && args.outputDir !== 'undefined' ? args.outputDir : undefined;
+            let failedCourses = 0;
+            const { accessible, locked } = filterAccessibleCourses(library.courses);
+
+            if (locked.length > 0) {
+                console.warn(`Skipping ${locked.length} locked course${locked.length === 1 ? '' : 's'} (no access).`);
+            }
+
+            if (accessible.length === 0) {
+                console.warn('No accessible courses found to download.');
+                return;
+            }
+
+            for (const course of accessible) {
+                try {
+                    await downloadCourse({
+                        url: course.url,
+                        outputDir: outputRoot ? resolveCourseOutputDir(outputRoot, library.groupName, course.title) : undefined,
+                        concurrency: args.concurrency,
+                        mode: 'course'
+                    });
+                } catch (err) {
+                    failedCourses += 1;
+                    console.error(`Failed to download course ${course.title}: ${String(err)}`);
+                }
+            }
+
+            if (failedCourses > 0) {
+                console.warn(`${failedCourses} courses failed.`);
+            }
+            return;
+        }
+
         await downloadCourse({
             url: args.url,
             outputDir: args.outputDir,

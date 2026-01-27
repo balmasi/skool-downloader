@@ -35,6 +35,41 @@ export interface ClassroomResult {
     modules: Module[];
 }
 
+export interface CourseListItem {
+    id?: string;
+    name?: string;
+    title: string;
+    url: string;
+    key: string;
+    numModules?: number;
+    coverImageUrl?: string;
+    hasAccess?: boolean;
+    privacy?: number;
+    updatedAt?: string;
+}
+
+export interface CourseLibraryResult {
+    groupName: string;
+    classroomUrl: string;
+    courses: CourseListItem[];
+}
+
+function resolveClassroomRootUrl(inputUrl: string) {
+    const urlObj = new URL(inputUrl);
+    const segments = urlObj.pathname.split('/').filter(Boolean);
+    const classroomIndex = segments.indexOf('classroom');
+    if (classroomIndex === -1) {
+        urlObj.search = '';
+        urlObj.hash = '';
+        return urlObj.toString();
+    }
+    const baseSegments = segments.slice(0, classroomIndex + 1);
+    urlObj.pathname = `/${baseSegments.join('/')}`;
+    urlObj.search = '';
+    urlObj.hash = '';
+    return urlObj.toString();
+}
+
 export class Scraper {
     private browser: Browser | null = null;
     private context: BrowserContext | null = null;
@@ -153,6 +188,73 @@ export class Scraper {
             courseName,
             courseImageUrl,
             modules: modules.filter(m => m.lessons.length > 0)
+        };
+    }
+
+    async parseCourseLibrary(url: string): Promise<CourseLibraryResult> {
+        if (!this.context) await this.init();
+        const page = await this.context!.newPage();
+
+        const classroomUrl = resolveClassroomRootUrl(url);
+        this.logger.info(`Navigating to ${classroomUrl}...`);
+        await page.goto(classroomUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(2000);
+
+        const nextData = await page.evaluate(() => {
+            const script = document.getElementById('__NEXT_DATA__');
+            return script ? JSON.parse(script.innerText) : null;
+        });
+
+        await page.close();
+
+        if (!nextData) throw new Error('Could not find __NEXT_DATA__ on classroom page');
+
+        const pageProps = nextData.props?.pageProps || {};
+        const allCourses = pageProps.allCourses || pageProps.renderData?.allCourses || [];
+
+        if (!Array.isArray(allCourses) || allCourses.length === 0) {
+            throw new Error('No courses found in classroom __NEXT_DATA__.');
+        }
+
+        const groupData = pageProps.currentGroup || {};
+        const groupName =
+            groupData.metadata?.displayName ||
+            groupData.metadata?.name ||
+            groupData.name ||
+            'Unknown Group';
+
+        const baseUrl = classroomUrl.replace(/\/$/, '');
+
+        const courses: CourseListItem[] = allCourses.map((course: any, index: number) => {
+            const metadata = course.metadata || {};
+            const courseSlug = course.name || course.id;
+            const title = metadata.title || course.name || course.id || `Course ${index + 1}`;
+            const url = courseSlug ? `${baseUrl}/${courseSlug}` : baseUrl;
+            const hasAccess =
+                metadata.hasAccess === 1 ? true : metadata.hasAccess === 0 ? false : undefined;
+
+            return {
+                id: course.id,
+                name: course.name,
+                title,
+                url,
+                key: course.id || course.name || url,
+                numModules: metadata.numModules,
+                coverImageUrl: metadata.coverImage || metadata.coverSmallUrl || metadata.image,
+                hasAccess,
+                privacy: metadata.privacy,
+                updatedAt: course.updatedAt
+            };
+        }).filter(course => course.url !== baseUrl);
+
+        if (courses.length === 0) {
+            throw new Error('No valid courses found in classroom listing.');
+        }
+
+        return {
+            groupName,
+            classroomUrl,
+            courses
         };
     }
 
