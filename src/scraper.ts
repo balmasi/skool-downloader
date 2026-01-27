@@ -1,9 +1,7 @@
 import { chromium, type Browser, type BrowserContext } from 'playwright';
 import fs from 'fs-extra';
-import path from 'path';
 import { createConsoleLogger, type Logger } from './logger.js';
-
-const STORAGE_STATE_PATH = path.join(process.cwd(), 'storage_state.json');
+import { STORAGE_STATE_PATH } from './auth.js';
 
 export interface Resource {
     title: string;

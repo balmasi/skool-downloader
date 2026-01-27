@@ -1,8 +1,8 @@
 downloads/*
+.auth/
 cookies.txt
 storage_state.json
 node_modules/*
 bin/yt-dlp*
 bin/ffmpeg*
 bin/ffprobe*
-

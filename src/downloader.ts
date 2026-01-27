@@ -4,13 +4,12 @@ import fs from 'fs-extra';
 import axios from 'axios';
 import { Readable } from 'stream';
 import { createConsoleLogger, type Logger } from './logger.js';
+import { COOKIES_TXT_PATH } from './auth.js';
 
 const YTDlpWrap = (YTDlpWrapPkg as any).default || YTDlpWrapPkg;
 
 const BIN_DIR = path.join(process.cwd(), 'bin');
 const YTDLP_PATH = path.join(BIN_DIR, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
-const COOKIES_TXT_PATH = path.join(process.cwd(), 'cookies.txt');
-
 export class Downloader {
     private ytDlp: any = null;
     private initPromise: Promise<void> | null = null;

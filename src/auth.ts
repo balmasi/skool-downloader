@@ -3,10 +3,52 @@ import fs from 'fs-extra';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const STORAGE_STATE_PATH = path.join(process.cwd(), 'storage_state.json');
-const COOKIES_TXT_PATH = path.join(process.cwd(), 'cookies.txt');
+export const AUTH_DIR = path.join(process.cwd(), '.auth');
+export const STORAGE_STATE_PATH = path.join(AUTH_DIR, 'storage_state.json');
+export const COOKIES_TXT_PATH = path.join(AUTH_DIR, 'cookies.txt');
+
+export async function ensureAuthDir() {
+    await fs.ensureDir(AUTH_DIR);
+}
+
+export type AuthStatus = {
+    status: 'valid' | 'expired' | 'missing' | 'invalid' | 'no-expiry';
+    expiresAt?: Date;
+};
+
+export async function getAuthStatus(): Promise<AuthStatus> {
+    const hasState = await fs.pathExists(STORAGE_STATE_PATH);
+    if (!hasState) return { status: 'missing' };
+
+    try {
+        const state = await fs.readJson(STORAGE_STATE_PATH);
+        const cookies = Array.isArray(state?.cookies) ? state.cookies : [];
+        const skoolCookies = cookies.filter((cookie: any) => {
+            return typeof cookie?.domain === 'string' && cookie.domain.includes('skool.com');
+        });
+
+        if (skoolCookies.length === 0) return { status: 'invalid' };
+
+        const expiries = skoolCookies
+            .map((cookie: any) => Number(cookie?.expires))
+            .filter((value) => Number.isFinite(value) && value > 0);
+
+        if (expiries.length === 0) return { status: 'no-expiry' };
+
+        const latestExpiry = Math.max(...expiries);
+        const expiresAt = new Date(latestExpiry * 1000);
+        if (latestExpiry > Date.now() / 1000) {
+            return { status: 'valid', expiresAt };
+        }
+
+        return { status: 'expired', expiresAt };
+    } catch {
+        return { status: 'invalid' };
+    }
+}
 
 export async function login() {
+    await ensureAuthDir();
     console.log('Opening browser for manual login...');
     const browser = await chromium.launch({ headless: false });
     const context = await browser.newContext();

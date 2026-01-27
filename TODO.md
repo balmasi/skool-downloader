@@ -28,8 +28,8 @@
 ## 🎨 Polishing & User Experience
 - [x] **Better downloading of content**
     - [x] Ensure that images from the lesson content are also downloaded
-- [ ] **Interactive CLI**
-    - [ ] Well-designed commands to help user choose which content they want to download
+- [x] **Interactive CLI**
+    - [x] Well-designed commands to help user choose which content they want to download
 - [ ] **Download entire courses library from the community**
     - [ ] Allow optional selection of specific courses
     - [ ] Integrate into interactive CLI

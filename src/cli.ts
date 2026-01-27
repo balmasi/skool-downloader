@@ -4,11 +4,9 @@ import path from 'path';
 import fs from 'fs-extra';
 import { Listr, PRESET_TIMER } from 'listr2';
 import { downloadCourse, type DownloadMode } from './index.js';
-import { login } from './auth.js';
+import { login, getAuthStatus } from './auth.js';
 import { regenerateIndex } from './regenerate-index.js';
 import type { Logger } from './logger.js';
-
-const STORAGE_STATE_PATH = path.join(process.cwd(), 'storage_state.json');
 
 type CliArgs = {
     command?: 'login' | 'download' | 'regenerate-index' | 'help';
@@ -99,14 +97,32 @@ function buildInteractiveLogger(): Logger {
     };
 }
 
-async function ensureLogin(): Promise<boolean> {
-    const hasState = await fs.pathExists(STORAGE_STATE_PATH);
-    if (hasState) return true;
+function formatExpiry(expiresAt?: Date) {
+    if (!expiresAt) return 'unknown time';
+    return expiresAt.toLocaleString();
+}
 
-    const shouldLogin = await confirm({
-        message: 'No saved login session found. Open a browser to log in now?',
-        initialValue: true
-    });
+async function ensureLogin(): Promise<boolean> {
+    const status = await getAuthStatus();
+    if (status.status === 'valid') {
+        if (status.expiresAt) {
+            log.info(`Using saved login (expires ${formatExpiry(status.expiresAt)}).`);
+        } else {
+            log.info('Using saved login.');
+        }
+        return true;
+    }
+
+    let promptMessage = 'No saved login session found. Open a browser to log in now?';
+    if (status.status === 'expired') {
+        promptMessage = `Saved login expired on ${formatExpiry(status.expiresAt)}. Log in again now?`;
+    } else if (status.status === 'no-expiry') {
+        promptMessage = 'Saved login has no expiry info. Log in again now?';
+    } else if (status.status === 'invalid') {
+        promptMessage = 'Saved login could not be validated. Log in again now?';
+    }
+
+    const shouldLogin = await confirm({ message: promptMessage, initialValue: true });
     handleCancel(shouldLogin);
 
     if (shouldLogin) {
@@ -114,7 +130,7 @@ async function ensureLogin(): Promise<boolean> {
         return true;
     }
 
-    log.warn('Login skipped. Downloads may fail if the course is private.');
+    log.warn('Login required to continue.');
     return false;
 }
 
@@ -160,7 +176,11 @@ async function runInteractive() {
         return;
     }
 
-    await ensureLogin();
+    const loggedIn = await ensureLogin();
+    if (!loggedIn) {
+        outro('Login required. Exiting.');
+        return;
+    }
 
     const urlInput = await text({
         message: actionValue === 'download-course' ? 'Course classroom URL' : 'Lesson URL (with ?md=...)',
@@ -365,6 +385,11 @@ async function runWithArgs(args: CliArgs) {
     }
 
     if (args.command === 'download' && args.url) {
+        const loggedIn = await ensureLogin();
+        if (!loggedIn) {
+            console.log('Login required. Exiting.');
+            return;
+        }
         await downloadCourse({
             url: args.url,
             outputDir: args.outputDir,
