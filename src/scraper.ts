@@ -6,10 +6,11 @@ const STORAGE_STATE_PATH = path.join(process.cwd(), 'storage_state.json');
 
 export interface Resource {
     title: string;
-    file_id: string;
-    file_name: string;
-    file_content_type: string;
+    file_id?: string;
+    file_name?: string;
+    file_content_type?: string;
     downloadUrl?: string;
+    isExternal?: boolean;
 }
 
 export interface Lesson {
@@ -236,39 +237,96 @@ export class Scraper {
         // Resource extraction
         let resources: Resource[] = [];
         try {
+            // 1. Try to extract from metadata (standard native files)
             const rawResources = metadata.resources || foundLesson?.resources || '[]';
             if (typeof rawResources === 'string') {
                 resources = JSON.parse(rawResources);
             } else if (Array.isArray(rawResources)) {
                 resources = rawResources;
             }
+
+            // Normalize metadata resources (some have .link instead of .downloadUrl)
+            resources = resources.map((r: any) => {
+                if (r.link && !r.downloadUrl) {
+                    return {
+                        ...r,
+                        downloadUrl: r.link,
+                        isExternal: true
+                    };
+                }
+                return r;
+            });
+
         } catch (e) {
-            console.warn('    ⚠️ Failed to parse resources', e);
+            console.warn('    ⚠️ Failed to parse metadata resources', e);
         }
 
-        // Fetch download URLs for each resource using direct API calls
+        // 2. Scrape from DOM to catch external links and any native missing from metadata
+        try {
+            const domResources = await page.evaluate(() => {
+                const wrappers = Array.from(document.querySelectorAll('div[class*="ResourceWrapper"]'));
+                return wrappers.map(w => {
+                    const anchor = w.querySelector('a');
+                    const labelSpan = w.querySelector('span[class*="ResourceLabel"]');
+                    const title = labelSpan ? labelSpan.textContent?.trim() : 'Untitled Resource';
+                    
+                    const url = anchor ? anchor.href : null;
+                    // If it has an anchor and it's not a skool download link, it's external
+                    const isExternal = !!(url && !url.includes('api2.skool.com') && !url.includes('/files/'));
+
+                    return { title, url, isExternal };
+                });
+            });
+
+            // Merge DOM resources into the metadata resources
+            for (const domRes of domResources) {
+                const exists = resources.some(r => r.title === domRes.title);
+                if (!exists && domRes.title) {
+                    if (domRes.isExternal && domRes.url) {
+                        resources.push({
+                            title: domRes.title,
+                            downloadUrl: domRes.url,
+                            isExternal: true,
+                            file_name: domRes.title
+                        });
+                    } else {
+                        // If it's native but wasn't in metadata, it might be a link-style resource 
+                        // that still points to a skool file.
+                        if (domRes.url) {
+                            resources.push({
+                                title: domRes.title,
+                                downloadUrl: domRes.url,
+                                file_name: domRes.title
+                            });
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('    ⚠️ DOM-based resource scraping failed:', err);
+        }
+
+        // Fetch download URLs for each native resource using direct API calls
         if (resources.length > 0) {
             console.log(`    📥 Found ${resources.length} resources. Fetching download URLs...`);
 
             for (const res of resources) {
+                // Skip if it's already an external link or already has a download URL
+                if (res.isExternal || (res.downloadUrl && res.downloadUrl.startsWith('http')) || !res.file_id) {
+                    continue;
+                }
+
                 try {
                     console.log(`      🔗 Requesting download URL for "${res.title}"...`);
-
-                    // Use Playwright's page context to make authenticated API request
                     const response = await page.evaluate(async (fileId: string) => {
                         const apiUrl = `https://api2.skool.com/files/${fileId}/download-url?expire=28800`;
                         try {
                             const resp = await fetch(apiUrl, {
                                 method: 'POST',
-                                credentials: 'include' // Include cookies for auth
+                                credentials: 'include'
                             });
-
-                            if (!resp.ok) {
-                                return { success: false, error: `HTTP ${resp.status}` };
-                            }
-
+                            if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
                             const text = await resp.text();
-                            // Response is just the plain URL as text
                             return { success: true, url: text.trim() };
                         } catch (e) {
                             return { success: false, error: String(e) };

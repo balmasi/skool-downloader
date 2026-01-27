@@ -12,20 +12,27 @@ const COOKIES_TXT_PATH = path.join(process.cwd(), 'cookies.txt');
 
 export class Downloader {
     private ytDlp: any = null;
+    private initPromise: Promise<void> | null = null;
 
     async init() {
-        if (!fs.existsSync(BIN_DIR)) {
-            await fs.ensureDir(BIN_DIR);
-        }
-
-        if (!fs.existsSync(YTDLP_PATH)) {
-            console.log('Downloading yt-dlp binary locally...');
-            await YTDlpWrap.downloadFromGithub(YTDLP_PATH);
-            if (process.platform !== 'win32') {
-                await fs.chmod(YTDLP_PATH, 0o755);
+        if (this.initPromise) return this.initPromise;
+        
+        this.initPromise = (async () => {
+            if (!fs.existsSync(BIN_DIR)) {
+                await fs.ensureDir(BIN_DIR);
             }
-        }
-        this.ytDlp = new YTDlpWrap(YTDLP_PATH);
+
+            if (!fs.existsSync(YTDLP_PATH)) {
+                console.log('Downloading yt-dlp binary locally...');
+                await YTDlpWrap.downloadFromGithub(YTDLP_PATH);
+                if (process.platform !== 'win32') {
+                    await fs.chmod(YTDLP_PATH, 0o755);
+                }
+            }
+            this.ytDlp = new YTDlpWrap(YTDLP_PATH);
+        })();
+
+        return this.initPromise;
     }
 
     async downloadVideo(url: string, outputDir: string, filename: string) {
@@ -108,26 +115,27 @@ export class Downloader {
         const imgRegex = /<img[^>]+src="([^">]+)"/g;
         let match;
         let processedHtml = html;
+        const tasks: { url: string; outputPath: string }[] = [];
 
         while ((match = imgRegex.exec(html)) !== null) {
             const url = match[1];
             if (!url) continue;
+            if (!url.startsWith('http')) continue;
 
-            try {
-                // Ignore relative paths if any
-                if (!url.startsWith('http')) continue;
+            const filename = `img_${Buffer.from(url).toString('base64').substring(0, 10)}_${path.basename(new URL(url).pathname)}`;
+            const outputPath = path.join(assetsDir, filename);
+            tasks.push({ url, outputPath });
+            
+            processedHtml = processedHtml.replace(url, `assets/${filename}`);
+        }
 
-                const filename = `img_${Buffer.from(url).toString('base64').substring(0, 10)}_${path.basename(new URL(url).pathname)}`;
-                const outputPath = path.join(assetsDir, filename);
-
-                if (!fs.existsSync(outputPath)) {
-                    await this.downloadAsset(url, outputPath);
-                }
-
-                processedHtml = processedHtml.replace(url, `assets/${filename}`);
-            } catch (err) {
-                console.warn(`      ⚠️ Failed to localize image: ${url}`);
-            }
+        if (tasks.length > 0) {
+            console.log(`      🖼️  Localizing ${tasks.length} images...`);
+            await Promise.all(tasks.map(task => 
+                this.downloadAsset(task.url, task.outputPath).catch(err => 
+                    console.warn(`      ⚠️ Failed to localize image: ${task.url}`)
+                )
+            ));
         }
 
         return processedHtml;

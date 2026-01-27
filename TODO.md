@@ -11,26 +11,26 @@
     - [x] Parse `course.metadata.resources` from `__NEXT_DATA__`.
     - [x] Download PDFs, DOCX, and other files into a `resources/` folder within each lesson.
     - [x] Add links to these resources in the generated `index.html`.
-    - [x] Use direct API calls to `https://api2.skool.com/files/{file_id}/download-url` instead of DOM interaction.
+    - [x] Use direct API calls to `https://api2.skool.com/files/{file_id}/download-url` instead of DOM interaction for skool uploaded (native) content.
+    - [x] Scrape DOM for **external** links and additional resources missing from metadata.**
 - [x] **Single Lesson Extraction**
     - [x] Accept lesson URLs (with `?md=`) to download only that specific lesson.
 - [x] **Skip Already Downloaded Content**
     - [x] Check if videos, resources, and images already exist before downloading.
     - [x] Display file size and skip message for existing content.
 
+## 🎨 Performance
+- [x] **Parallel Content Downloading (Configurable)**
+    - [x] Ensure that images from the lesson content are also downloaded
+    - [x] Parallelize lessons with concurrency control
+    - [x] Parallelize assets (images/resources) within lessons
 
 ## 🎨 Polishing & User Experience
-- [ ] **Internal Link Mapping**
-    - [ ] Map absolute Skool links between lessons to relative local file paths.
-- [ ] **Improved Visual Design**
-    - [ ] Enhance the CSS of local pages to feel more premium (vibrant colors, better cards, glassmorphism).
-- [ ] **ffmpeg Management**
-    - [ ] Add a setup script to download a local `ffmpeg` binary for zero-config high-quality downloads.
-- [ ] **Rate Limiting & Anti-Detection**
-    - [ ] Implement randomized delays and human-like interaction loops.
-
-## 📦 Distribution
-- [ ] **Local Readme for Users**
-    - [ ] Create a `README.md` for end-users explaining how to view the downloaded content (e.g., "Open index.html").
-- [ ] **Electron Version (Optional)**
-    - [ ] Package this as a simple GUI app for users who aren't comfortable with the CLI.
+- [x] **Better downloading of content**
+    - [x] Ensure that images from the lesson content are also downloaded
+- [ ] **Interactive CLI**
+    - [ ] Well-designed commands to help user choose which content they want to download
+- [ ] **Download entire courses library from the community**
+    - [ ] Allow optional selection of specific courses
+    - [ ] Integrate into interactive CLI
+    - [ ] Save course with image, and navigable HTML for each course (with image), as well as all courses for the community. (make sure update hooks are solid)
