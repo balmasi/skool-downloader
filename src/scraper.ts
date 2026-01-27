@@ -28,6 +28,12 @@ export interface Module {
     lessons: Lesson[];
 }
 
+export interface ClassroomResult {
+    groupName: string;
+    courseName: string;
+    modules: Module[];
+}
+
 export class Scraper {
     private browser: Browser | null = null;
     private context: BrowserContext | null = null;
@@ -45,7 +51,7 @@ export class Scraper {
         if (this.browser) await this.browser.close();
     }
 
-    async parseClassroom(url: string): Promise<Module[]> {
+    async parseClassroom(url: string): Promise<ClassroomResult> {
         if (!this.context) await this.init();
         const page = await this.context!.newPage();
 
@@ -72,6 +78,29 @@ export class Scraper {
             throw new Error('Course structure not found in __NEXT_DATA__');
         }
 
+        // Extract Group (Community) Name
+        const groupData = pageProps.currentGroup || {};
+        const groupName = groupData.metadata?.name || groupData.name || 'Unknown Group';
+
+        // Extract Course Name
+        let courseName = 'Unknown Course';
+        if (courseData.metadata?.title) {
+            courseName = courseData.metadata.title;
+        } else if (courseData.course?.metadata?.title) {
+            courseName = courseData.course.metadata.title;
+        } else {
+            // Fallback: match current URL segment with allCourses/renderData.allCourses
+            const urlParts = cleanUrl.split('/');
+            const urlCourseHandle = urlParts[urlParts.length - 1]; // e.g. "767876d4"
+            const allCourses = pageProps.allCourses || pageProps.renderData?.allCourses || [];
+            const foundCourse = allCourses.find((c: any) => c.name === urlCourseHandle);
+            if (foundCourse?.metadata?.title) {
+                courseName = foundCourse.metadata.title;
+            }
+        }
+
+        console.log(`\x1b[32m%s\x1b[0m`, `🎓 Course detected: ${courseName}`);
+
         // Skool Hierarchy:
         // Set (Module Group) -> Children (Modules/Lessons)
 
@@ -93,7 +122,11 @@ export class Scraper {
             return { title: setTitle, index: mIdx + 1, lessons };
         });
 
-        return modules.filter(m => m.lessons.length > 0);
+        return {
+            groupName,
+            courseName,
+            modules: modules.filter(m => m.lessons.length > 0)
+        };
     }
 
     async extractLessonData(url: string): Promise<Lesson> {

@@ -33,7 +33,7 @@ The goal of this project is to provide a robust, platform-independent tool for c
 - `src/auth.ts`: Handles the manual login flow and cookie conversion.
 - `src/scraper.ts`: Navigates the course tree and parses lesson metadata from Next.js state.
 - `src/downloader.ts`: Wrapper for `yt-dlp` and logic for image localization and resource downloads.
-- `src/index.ts`: CLI entry point, single lesson/full course logic (with URL sanitization), and offline HTML page/index generation.
+- `src/index.ts`: CLI entry point, single lesson/full course logic (with URL sanitization), and offline HTML page/index generation. **Organizer**: Automatically prefixes download folders with the community name and course title.
 - **Single Lesson Extraction**: The tool detects `?md=` or `?lesson=` in the input URL to download only a specific lesson instead of the entire course.
 - **Native Video Handling**: Automates interaction with the Mux player to capture signed tokens.
 - **Resource Downloads**: Uses direct API calls to fetch signed download URLs for attachments, stored in `resources/` folder within each lesson.

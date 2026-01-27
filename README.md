@@ -58,14 +58,15 @@ npm run skool "https://www.skool.com/your-community/classroom/course-id?md=lesso
 The tool creates a `downloads/` folder with the following structure:
 ```text
 downloads/
-├── index.html (Master navigation page)
-└── 1-Module Name/
-    ├── 1-Lesson Title/
-    │   ├── index.html (The lesson page)
-    │   ├── video.mp4
-    │   ├── assets/ (Localized images)
-    │   └── resources/ (Attachments)
-    └── ...
+└── Community Name - Course Name/
+    ├── index.html (Master navigation page)
+    └── 1-Module Name/
+        ├── 1-Lesson Title/
+        │   ├── index.html (The lesson page)
+        │   ├── video.mp4
+        │   ├── assets/ (Localized images)
+        │   └── resources/ (Attachments)
+        └── ...
 ```
 
 ## 🔧 Advanced

@@ -38,19 +38,23 @@ async function main() {
     }
 
     const classroomUrl = inputUrl.split('?')[0];
-    const baseOutputDir = args[1] || path.join(process.cwd(), 'downloads');
 
     const scraper = new Scraper();
     const downloader = new Downloader();
 
     try {
         console.log('\x1b[33m%s\x1b[0m', '🚀 Fetching course structure...');
-        let modules = await scraper.parseClassroom(classroomUrl);
+        let { modules, courseName, groupName } = await scraper.parseClassroom(classroomUrl);
 
         if (modules.length === 0) {
             console.log('\x1b[31m%s\x1b[0m', '❌ No modules found. Are you sure this is a classroom URL and you are logged in?');
             return;
         }
+
+        const sanitizedGroupName = groupName.replace(/[/\\?%*:|"<>]/g, '-');
+        const sanitizedCourseName = courseName.replace(/[/\\?%*:|"<>]/g, '-');
+        const baseOutputDir = args[1] || path.join(process.cwd(), 'downloads', `${sanitizedGroupName} - ${sanitizedCourseName}`);
+        await fs.ensureDir(baseOutputDir);
 
         // Handle single lesson mode
         if (targetLessonId) {
@@ -213,11 +217,12 @@ async function main() {
             <html>
             <head>
                 <meta charset="UTF-8">
-                <title>Course Backup</title>
+                <title>${courseName} (${groupName}) - Backup</title>
                 <style>
                     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 60px auto; padding: 20px; line-height: 1.6; color: #333; background: #f4f7f9; }
                     .card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-                    h1 { color: #111; margin-bottom: 30px; border-bottom: 3px solid #5a1cb5; display: inline-block; }
+                    h1 { color: #111; margin: 0; display: inline-block; }
+                    .group-name { color: #666; font-size: 1.2em; margin-bottom: 30px; border-bottom: 3px solid #5a1cb5; padding-bottom: 10px; }
                     h2 { margin-top: 30px; font-size: 1.4em; color: #444; border-left: 4px solid #5a1cb5; padding-left: 15px; }
                     ul { list-style: none; padding: 0; }
                     li { margin-bottom: 10px; padding-left: 20px; position: relative; }
@@ -228,7 +233,8 @@ async function main() {
             </head>
             <body>
                 <div class="card">
-                    <h1>Course Archive</h1>
+                    <h1>${courseName}</h1>
+                    <div class="group-name">${groupName}</div>
                     ${courseInfo.map(m => `
                         <h2>${m.title}</h2>
                         <ul>
