@@ -1,6 +1,7 @@
 import { Scraper } from './scraper.js';
 import { Downloader } from './downloader.js';
 import { login } from './auth.js';
+import { regenerateIndex } from './regenerate-index.js';
 import fs from 'fs-extra';
 import path from 'path';
 
@@ -117,14 +118,25 @@ async function main() {
 
                         for (const res of lessonData.resources) {
                             if (res.downloadUrl) {
-                                console.log(`    ⬇️ Downloading resource: ${res.title}`);
                                 try {
                                     const safeFileName = res.file_name.replace(/[/\\?%*:|"<>]/g, '-');
                                     const resPath = path.join(resourcesDir, safeFileName);
+
+                                    // Check if resource already exists
+                                    if (fs.existsSync(resPath)) {
+                                        const stats = fs.statSync(resPath);
+                                        if (stats.size > 0) {
+                                            console.log(`    ⏭️  Resource already exists, skipping: ${res.title} (${(stats.size / 1024).toFixed(2)} KB)`);
+                                            resourcesHtml.push(`<li><a href="resources/${encodeURIComponent(safeFileName)}" target="_blank">${res.title}</a></li>`);
+                                            continue;
+                                        }
+                                    }
+
+                                    console.log(`    ⬇️  Downloading resource: ${res.title}`);
                                     await downloader.downloadAsset(res.downloadUrl, resPath);
                                     resourcesHtml.push(`<li><a href="resources/${encodeURIComponent(safeFileName)}" target="_blank">${res.title}</a></li>`);
                                 } catch (err) {
-                                    console.error(`    ⚠️ Failed to download resource ${res.title}:`, err);
+                                    console.error(`    ⚠️  Failed to download resource ${res.title}:`, err);
                                 }
                             }
                         }
@@ -190,6 +202,9 @@ async function main() {
                 }
             }
             courseInfo.push({ title: module.title, lessons: processedLessons });
+
+            // Regenerate index after each module to save progress
+            await regenerateIndex(baseOutputDir);
         }
 
         // Generate Master Index

@@ -14,6 +14,10 @@
     - [x] Use direct API calls to `https://api2.skool.com/files/{file_id}/download-url` instead of DOM interaction.
 - [x] **Single Lesson Extraction**
     - [x] Accept lesson URLs (with `?md=`) to download only that specific lesson.
+- [x] **Skip Already Downloaded Content**
+    - [x] Check if videos, resources, and images already exist before downloading.
+    - [x] Display file size and skip message for existing content.
+
 
 ## 🎨 Polishing & User Experience
 - [ ] **Internal Link Mapping**

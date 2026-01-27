@@ -34,8 +34,17 @@ export class Downloader {
         await fs.ensureDir(outputDir);
         const outputPath = path.join(outputDir, `${filename}.mp4`);
 
+        // Skip if video already exists
+        if (fs.existsSync(outputPath)) {
+            const stats = fs.statSync(outputPath);
+            if (stats.size > 0) {
+                console.log(`    ⏭️  Video already exists, skipping download (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+                return;
+            }
+        }
+
         const displayUrl = url.length > 100 ? url.substring(0, 97) + '...' : url;
-        console.log(`Downloading video from ${displayUrl}`);
+        console.log(`    ⬇️  Downloading video from ${displayUrl}`);
 
         const args = [
             url,
@@ -64,6 +73,15 @@ export class Downloader {
 
     async downloadAsset(url: string, outputPath: string) {
         await fs.ensureDir(path.dirname(outputPath));
+
+        // Skip if asset already exists
+        if (fs.existsSync(outputPath)) {
+            const stats = fs.statSync(outputPath);
+            if (stats.size > 0) {
+                return; // Silently skip, caller will handle messaging
+            }
+        }
+
         const writer = fs.createWriteStream(outputPath);
 
         const response = await axios({
