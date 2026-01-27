@@ -6,6 +6,7 @@ import { Listr, PRESET_TIMER } from 'listr2';
 import { downloadCourse, type DownloadMode } from './index.js';
 import { login, getAuthStatus } from './auth.js';
 import { regenerateIndex } from './regenerate-index.js';
+import { regenerateGroupIndex } from './regenerate-group-index.js';
 import type { Logger } from './logger.js';
 
 type CliArgs = {
@@ -19,7 +20,7 @@ type CliArgs = {
 };
 
 function showHelp() {
-    console.log(`\nSkool Downloader\n\nUsage:\n  skool                          Interactive mode\n  skool login                    Log in to Skool\n  skool <classroom-url>          Download a course\n  skool <lesson-url>             Download a single lesson (URL with ?md=)\n\nOptions:\n  -o, --output <dir>             Output directory (course root)\n  -c, --concurrency <number>     Lesson concurrency (default: 8)\n  --course                       Force course mode (ignore ?md=)\n  --lesson                       Force lesson mode\n  --lesson-id <id>               Explicit lesson id\n  -h, --help                     Show help\n`);
+    console.log(`\nSkool Downloader\n\nUsage:\n  skool                          Interactive mode\n  skool login                    Log in to Skool\n  skool <classroom-url>          Download a course\n  skool <lesson-url>             Download a single lesson (URL with ?md=)\n  skool regenerate-index         Regenerate all course indexes\n\nOptions:\n  -o, --output <dir>             Output directory (course root)\n  -c, --concurrency <number>     Lesson concurrency (default: 8)\n  --course                       Force course mode (ignore ?md=)\n  --lesson                       Force lesson mode\n  --lesson-id <id>               Explicit lesson id\n  -h, --help                     Show help\n`);
 }
 
 function parseArgs(args: string[]): CliArgs {
@@ -143,7 +144,7 @@ async function runInteractive() {
             { value: 'download-course', label: 'Download a full course' },
             { value: 'download-lesson', label: 'Download a single lesson' },
             { value: 'login', label: 'Log in to Skool' },
-            { value: 'regenerate-index', label: 'Regenerate a course index' },
+            { value: 'regenerate-index', label: 'Regenerate all course indexes' },
             { value: 'exit', label: 'Exit' }
         ]
     });
@@ -165,14 +166,8 @@ async function runInteractive() {
     }
 
     if (actionValue === 'regenerate-index') {
-        const selectedDir = await selectCourseDirectory();
-        if (!selectedDir) {
-            outro('No courses found to regenerate.');
-            return;
-        }
-
-        await regenerateIndex(selectedDir);
-        outro('Index regenerated.');
+        await regenerateAllIndexes();
+        outro('Indexes regenerated.');
         return;
     }
 
@@ -279,83 +274,43 @@ async function runInteractive() {
     outro(`All set! Files are ready at ${summary.outputDir}`);
 }
 
-type CourseOption = {
-    label: string;
-    value: string;
-    community: string;
-    updatedAt: number;
-};
-
-async function selectCourseDirectory(): Promise<string | null> {
+async function regenerateAllIndexes() {
     const downloadsRoot = path.join(process.cwd(), 'downloads');
     const rootExists = await fs.pathExists(downloadsRoot);
-    if (!rootExists) return null;
+    if (!rootExists) {
+        console.log(`Downloads folder not found: ${downloadsRoot}`);
+        return;
+    }
 
     const groupEntries = await fs.readdir(downloadsRoot, { withFileTypes: true });
-    const groupDirs = groupEntries.filter(entry => entry.isDirectory());
+    const groupDirs = groupEntries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.'));
 
-    const courses: CourseOption[] = [];
+    if (groupDirs.length === 0) {
+        console.log('No group folders found to regenerate.');
+        return;
+    }
+
+    let regeneratedCourses = 0;
+    let regeneratedGroups = 0;
 
     for (const groupDir of groupDirs) {
         const groupPath = path.join(downloadsRoot, groupDir.name);
         const courseEntries = await fs.readdir(groupPath, { withFileTypes: true });
-        const courseDirs = courseEntries.filter(entry => entry.isDirectory());
+        const courseDirs = courseEntries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.'));
+
+        if (courseDirs.length === 0) continue;
 
         for (const courseDir of courseDirs) {
             const coursePath = path.join(groupPath, courseDir.name);
-            const manifestPath = path.join(coursePath, '.course.json');
-            const hasManifest = await fs.pathExists(manifestPath);
-            if (!hasManifest) continue;
-
-            let community = groupDir.name;
-            let courseName = courseDir.name;
-            try {
-                const manifest = await fs.readJson(manifestPath);
-                community = manifest.groupName || community;
-                courseName = manifest.courseName || courseName;
-            } catch {
-                // Ignore manifest read errors and fall back to folder names.
-            }
-
-            const stats = await fs.stat(coursePath);
-            courses.push({
-                label: `${courseName}`,
-                value: coursePath,
-                community,
-                updatedAt: stats.mtimeMs
-            });
+            await regenerateIndex(coursePath, { silent: true });
+            regeneratedCourses += 1;
         }
+
+        await regenerateGroupIndex(groupPath, { silent: true });
+        regeneratedGroups += 1;
     }
 
-    if (courses.length === 0) return null;
-
-    const communities = Array.from(new Set(courses.map(course => course.community))).sort((a, b) => {
-        const aLatest = Math.max(...courses.filter(c => c.community === a).map(c => c.updatedAt));
-        const bLatest = Math.max(...courses.filter(c => c.community === b).map(c => c.updatedAt));
-        return bLatest - aLatest;
-    });
-
-    const communityChoice = await select({
-        message: 'Choose a community',
-        options: communities.map(name => ({ value: name, label: name }))
-    });
-    handleCancel(communityChoice);
-
-    const selectedCommunity = communityChoice as string;
-    const communityCourses = courses
-        .filter(course => course.community === selectedCommunity)
-        .sort((a, b) => b.updatedAt - a.updatedAt);
-
-    const courseChoice = await select({
-        message: `Choose a course from ${selectedCommunity}`,
-        options: communityCourses.map(course => ({
-            value: course.value,
-            label: course.label
-        }))
-    });
-    handleCancel(courseChoice);
-
-    return courseChoice as string;
+    console.log(`Regenerated ${regeneratedCourses} course indexes across ${regeneratedGroups} groups.`);
 }
 
 async function runWithArgs(args: CliArgs) {
@@ -371,16 +326,12 @@ async function runWithArgs(args: CliArgs) {
 
     if (args.command === 'regenerate-index') {
         if (!args.regenerateDir) {
-            const selectedDir = await selectCourseDirectory();
-            if (!selectedDir) {
-                console.log('No courses found to regenerate.');
-                return;
-            }
-            await regenerateIndex(selectedDir);
+            await regenerateAllIndexes();
             return;
         }
 
         await regenerateIndex(args.regenerateDir);
+        await regenerateGroupIndex(path.dirname(args.regenerateDir));
         return;
     }
 

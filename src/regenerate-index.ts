@@ -182,8 +182,8 @@ async function regenerateIndex(
                         --panel-2: #f6f7fb;
                         --text: #14161d;
                         --muted: #596070;
-                        --accent: #f28c28;
-                        --accent-2: #2563eb;
+                        --accent: #3b82f6;
+                        --accent-2: #0f172a;
                         --ring: rgba(20,22,29,0.08);
                         --shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
                     }
@@ -191,10 +191,7 @@ async function regenerateIndex(
                     body {
                         margin: 0;
                         font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
-                        background:
-                            radial-gradient(900px 500px at 0% -10%, rgba(242,140,40,0.18), transparent),
-                            radial-gradient(900px 600px at 100% 0%, rgba(37,99,235,0.12), transparent),
-                            var(--bg);
+                        background: linear-gradient(145deg, #fefefe 0%, #f3f6fb 100%);
                         color: var(--text);
                         line-height: 1.6;
                     }
@@ -209,11 +206,23 @@ async function regenerateIndex(
                         gap: 28px;
                         align-items: stretch;
                         background: var(--panel);
-                        border: 1px solid var(--ring);
-                        border-radius: 24px;
-                        padding: 28px;
-                        box-shadow: var(--shadow);
+                        border-radius: 28px;
+                        padding: 32px;
+                        box-shadow:
+                            0 20px 45px rgba(15, 23, 42, 0.18),
+                            0 10px 20px rgba(15, 23, 42, 0.08);
                     }
+                    .breadcrumb {
+                        font-size: 0.95rem;
+                        color: var(--muted);
+                        margin-bottom: 18px;
+                        display: flex;
+                        flex-wrap: wrap;
+                        gap: 8px;
+                        align-items: center;
+                    }
+                    .breadcrumb a { color: var(--accent); text-decoration: none; font-weight: 600; }
+                    .breadcrumb span { color: var(--muted); }
                     .hero-copy {
                         display: flex;
                         flex-direction: column;
@@ -274,14 +283,16 @@ async function regenerateIndex(
                     }
                     .module {
                         background: var(--panel);
-                        border: 1px solid var(--ring);
-                        border-radius: 18px;
-                        padding: 18px 20px;
-                        transition: transform 0.2s ease, box-shadow 0.2s ease;
+                        border-radius: 20px;
+                        padding: 22px;
+                        transition: transform 0.25s ease, box-shadow 0.25s ease;
+                        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.1);
                     }
                     .module:hover {
-                        transform: translateY(-2px);
-                        box-shadow: 0 14px 26px rgba(15, 23, 42, 0.16);
+                        transform: translateY(-4px);
+                        box-shadow:
+                            0 30px 60px rgba(15, 23, 42, 0.18),
+                            0 12px 24px rgba(15, 23, 42, 0.1);
                     }
                     .module-title {
                         margin: 0 0 12px 0;
@@ -311,20 +322,21 @@ async function regenerateIndex(
                     }
                     .lesson a {
                         display: block;
-                        padding: 10px 12px;
-                        border-radius: 12px;
+                        padding: 12px 14px;
+                        border-radius: 14px;
                         background: var(--panel-2);
-                        border: 1px solid rgba(255,255,255,0.06);
+                        border: 1px solid rgba(255,255,255,0.2);
                         color: var(--text);
                         text-decoration: none;
                         font-size: 0.98rem;
-                        min-height: 44px;
+                        min-height: 46px;
                         height: 100%;
-                        transition: border-color 0.2s ease, transform 0.2s ease;
+                        transition: border-color 0.25s ease, transform 0.25s ease;
+                        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15);
                     }
                     .lesson a:hover {
-                        border-color: rgba(242,140,40,0.5);
-                        transform: translateY(-1px);
+                        border-color: rgba(59,130,246,0.6);
+                        transform: translateY(-2px);
                     }
                     @media (min-width: 900px) {
                         .hero { grid-template-columns: 1.15fr 0.85fr; }
@@ -336,6 +348,13 @@ async function regenerateIndex(
             </head>
             <body>
                 <div class="page">
+                    ${groupName ? `
+                        <div class="breadcrumb">
+                            <a href="../index.html">${groupName}</a>
+                            <span>/</span>
+                            <span>${courseName}</span>
+                        </div>
+                    ` : ''}
                     <section class="hero">
                         <div class="hero-copy">
                             <h1 class="hero-title">${courseName}</h1>

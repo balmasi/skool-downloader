@@ -1,6 +1,7 @@
 import { Scraper, Module } from './scraper.js';
 import { Downloader } from './downloader.js';
 import { regenerateIndex } from './regenerate-index.js';
+import { regenerateGroupIndex } from './regenerate-group-index.js';
 import { createConsoleLogger, type Logger } from './logger.js';
 import fs from 'fs-extra';
 import path from 'path';
@@ -10,7 +11,9 @@ const DEFAULT_CONCURRENCY = 8;
 const MAX_CONCURRENCY = 16;
 
 const indexLimit = pLimit(1);
+const groupIndexLimit = pLimit(1);
 let activeOutputDir: string | null = null;
+let activeGroupDir: string | null = null;
 let shutdownHandlersRegistered = false;
 
 function registerShutdownHandlers(logger: Logger) {
@@ -25,6 +28,9 @@ function registerShutdownHandlers(logger: Logger) {
         logger.warn(`\n🛑 Caught ${signal}. Regenerating index before exit...`);
         try {
             await regenerateIndex(activeOutputDir);
+            if (activeGroupDir) {
+                await regenerateGroupIndex(activeGroupDir);
+            }
         } catch (err) {
             logger.error('⚠️ Failed to regenerate index during shutdown.', err);
         } finally {
@@ -280,6 +286,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
 
         await fs.ensureDir(baseOutputDir);
         activeOutputDir = baseOutputDir;
+        activeGroupDir = path.dirname(baseOutputDir);
         registerShutdownHandlers(logger);
 
         const courseInfo: Array<{
@@ -468,7 +475,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                         --panel-2: #f6f7fb;
                                         --text: #14161d;
                                         --muted: #5b6271;
-                                        --accent: #f28c28;
+                                        --accent: #3b82f6;
                                         --ring: rgba(20,22,29,0.08);
                                         --shadow: 0 16px 32px rgba(15, 23, 42, 0.12);
                                     }
@@ -476,10 +483,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                     body {
                                         margin: 0;
                                         font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
-                                        background:
-                                            radial-gradient(900px 500px at 0% -10%, rgba(242,140,40,0.18), transparent),
-                                            radial-gradient(900px 600px at 100% 0%, rgba(37,99,235,0.12), transparent),
-                                            var(--bg);
+                                        background: linear-gradient(160deg, #fdfdfd 0%, #eff2fb 100%);
                                         color: var(--text);
                                         line-height: 1.7;
                                     }
@@ -497,10 +501,12 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                     .breadcrumb span { color: var(--muted); }
                                     .container {
                                         background: var(--panel);
-                                        padding: 32px;
-                                        border-radius: 18px;
-                                        border: 1px solid var(--ring);
-                                        box-shadow: var(--shadow);
+                                        padding: 34px;
+                                        border-radius: 20px;
+                                        border: 1px solid rgba(20,22,29,0.05);
+                                        box-shadow:
+                                            0 25px 45px rgba(15, 23, 42, 0.18),
+                                            0 10px 20px rgba(15, 23, 42, 0.08);
                                     }
                                     h1 { margin: 0 0 16px 0; font-size: clamp(1.8rem, 3vw, 2.6rem); }
                                     video {
@@ -521,7 +527,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                         border: 1px solid var(--ring);
                                         margin-top: 28px;
                                     }
-                                    .resources h3 { margin: 0 0 10px 0; color: #1f3d7a; }
+                                    .resources h3 { margin: 0 0 10px 0; color: var(--accent); }
                                     .resources ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
                                     .resources a {
                                         color: #1f3d7a;
@@ -532,15 +538,15 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                         text-decoration: none;
                                     }
                                     .resources a::before { content: "📁"; }
-                                    a { color: #1f3d7a; text-decoration: none; word-break: break-word; }
+                                    a { color: var(--accent); text-decoration: none; word-break: break-word; }
                                     a:hover { text-decoration: underline; }
-                                    .nav { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--ring); }
+                                    .nav { margin-top: 28px; padding-top: 16px; border-top: 1px solid rgba(20,22,29,0.08); }
                                 </style>
                             </head>
                             <body>
                                 <div class="page">
                                     <div class="breadcrumb">
-                                        <a href="../../index.html">${groupName}</a>
+                                        <a href="../../../index.html">${groupName}</a>
                                         <span>/</span>
                                         <a href="../../index.html">${courseName}</a>
                                         <span>/</span>
@@ -622,6 +628,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
             await runConcurrent(tasks.map(task => () => task.run()), concurrency);
         }
         await indexLimit(() => regenerateIndex(baseOutputDir, { silent: options.suppressIndexLogs }));
+        await groupIndexLimit(() => regenerateGroupIndex(activeGroupDir ?? path.dirname(baseOutputDir), { silent: options.suppressIndexLogs }));
 
         const summary: DownloadSummary = {
             courseName,
