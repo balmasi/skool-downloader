@@ -66,16 +66,30 @@ async function regenerateIndex(
         }
     }
 
-    // Read all module directories
+    // Read all module directories and root-level lesson directories
     const entries = await fs.readdir(downloadsDir, { withFileTypes: true });
-    const moduleDirs = entries
-        .filter(entry => entry.isDirectory())
-        .sort((a, b) => {
-            // Extract module number from directory name (e.g., "1-Module Name")
-            const numA = parseInt(a.name.split('-')[0]) || 999;
-            const numB = parseInt(b.name.split('-')[0]) || 999;
-            return numA - numB;
-        });
+    const moduleDirs: typeof entries = [];
+    const rootLessonDirs: typeof entries = [];
+
+    for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name === 'assets') continue;
+        const entryPath = path.join(downloadsDir, entry.name);
+        const indexPath = path.join(entryPath, 'index.html');
+        const manifestPath = path.join(entryPath, 'lesson.json');
+        if (await fs.pathExists(indexPath) || await fs.pathExists(manifestPath)) {
+            rootLessonDirs.push(entry);
+        } else {
+            moduleDirs.push(entry);
+        }
+    }
+
+    moduleDirs.sort((a, b) => {
+        // Extract module number from directory name (e.g., "1-Module Name")
+        const numA = parseInt(a.name.split('-')[0]) || 999;
+        const numB = parseInt(b.name.split('-')[0]) || 999;
+        return numA - numB;
+    });
 
     const courseInfo: any[] = [];
 
@@ -142,7 +156,65 @@ async function regenerateIndex(
             courseInfo.push({
                 title: resolvedModuleTitle,
                 lessons: lessons,
-                index: resolvedModuleIndex
+                index: resolvedModuleIndex,
+                moduleDirName: moduleDir.name
+            });
+        }
+    }
+
+    if (rootLessonDirs.length > 0) {
+        rootLessonDirs.sort((a, b) => {
+            const numA = parseInt(a.name.split('-')[0]) || 999;
+            const numB = parseInt(b.name.split('-')[0]) || 999;
+            return numA - numB;
+        });
+
+        const lessons: any[] = [];
+
+        for (const lessonDir of rootLessonDirs) {
+            const lessonPath = path.join(downloadsDir, lessonDir.name);
+            const indexPath = path.join(lessonPath, 'index.html');
+            const manifestPath = path.join(lessonPath, 'lesson.json');
+
+            if (fs.existsSync(indexPath)) {
+                let lessonTitle = lessonDir.name.replace(/^\d+-/, '');
+                let relativePath = `${lessonDir.name}/index.html`;
+                let lessonIndex = parseInt(lessonDir.name.split('-')[0]) || 999;
+                let moduleTitleOverride: string | null = null;
+                let moduleIndexOverride: number | null = null;
+
+                if (fs.existsSync(manifestPath)) {
+                    try {
+                        const manifest: LessonManifest = await fs.readJson(manifestPath);
+                        lessonTitle = manifest.title || lessonTitle;
+                        relativePath = manifest.relativePath || relativePath;
+                        lessonIndex = manifest.lessonIndex ?? lessonIndex;
+                        moduleTitleOverride = manifest.moduleTitle || null;
+                        moduleIndexOverride = manifest.moduleIndex ?? null;
+                    } catch (err) {
+                        warn(`⚠️ Failed to read manifest for ${lessonDir.name}, using directory data.`);
+                    }
+                }
+
+                lessons.push({
+                    title: lessonTitle,
+                    path: relativePath,
+                    index: lessonIndex,
+                    moduleTitleOverride,
+                    moduleIndexOverride
+                });
+            }
+        }
+
+        if (lessons.length > 0) {
+            lessons.sort((a, b) => a.index - b.index);
+            const resolvedModuleTitle = lessons.find(l => l.moduleTitleOverride)?.moduleTitleOverride || 'Lessons';
+            const resolvedModuleIndex = lessons.find(l => l.moduleIndexOverride)?.moduleIndexOverride ?? 0;
+            courseInfo.push({
+                title: resolvedModuleTitle,
+                lessons: lessons,
+                index: resolvedModuleIndex,
+                moduleDirName: ''
             });
         }
     }

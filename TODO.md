@@ -30,7 +30,7 @@
     - [x] Ensure that images from the lesson content are also downloaded
 - [x] **Interactive CLI**
     - [x] Well-designed commands to help user choose which content they want to download
-- [ ] **Download entire courses library from the community**
-    - [ ] Allow optional selection of specific courses
-    - [ ] Integrate into interactive CLI
-    - [ ] Save course with image, and navigable HTML for each course (with image), as well as all courses for the community. (make sure update hooks are solid)
+- [x] **Download entire courses library from the community**
+    - [x] Allow optional selection of specific courses
+    - [x] Integrate into interactive CLI
+    - [x] Save course with image, and navigable HTML for each course (with image), as well as all courses for the community. (make sure update hooks are solid)

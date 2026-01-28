@@ -175,6 +175,11 @@ function createTaskRunner() {
         );
 
         await list.run();
+        if (typeof list.renderer?.end === 'function') {
+            list.renderer.end();
+        }
+        process.stdout.write('\n');
+        await new Promise(resolve => setTimeout(resolve, 0));
     };
 }
 
@@ -433,7 +438,8 @@ async function runInteractive() {
         log.warn(`${summary.failedLessons} lessons had errors. You can rerun the download to fill gaps.`);
     }
 
-    outro(`All set! Files are ready at ${summary.outputDir}`);
+    outro('All set!');
+    console.log(`Files are ready at:\n${summary.outputDir}`);
 }
 
 async function regenerateAllIndexes() {

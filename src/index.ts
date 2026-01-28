@@ -51,6 +51,7 @@ type CourseManifest = {
         index: number;
         title: string;
         moduleDirName: string;
+        root?: boolean;
     }>;
     updatedAt: string;
 };
@@ -300,7 +301,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
             lessons: [] as any[],
             totalLessons: m.lessons.length,
             mIndex: m.index,
-            moduleDirName: `${m.index}-${sanitizeName(m.title)}`
+            moduleDirName: m.root ? '' : `${m.index}-${sanitizeName(m.title)}`
         }));
 
         let lessonDestination: {
@@ -327,11 +328,13 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                 moduleDirName: moduleInfo.moduleDirName,
                 lessonIndex,
                 lessonTitle: lesson.title,
-                lessonDirName,
-                lessonOutputDir,
-                lessonRelativePath: `${moduleInfo.moduleDirName}/${lessonDirName}/index.html`
-            };
-        }
+            lessonDirName,
+            lessonOutputDir,
+            lessonRelativePath: moduleInfo.moduleDirName
+                ? `${moduleInfo.moduleDirName}/${lessonDirName}/index.html`
+                : `${lessonDirName}/index.html`
+        };
+    }
 
         const totalLessons = modules.reduce((sum, module) => sum + module.lessons.length, 0);
         options.callbacks?.onCourseStart?.({
@@ -367,7 +370,8 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
             modules: courseInfo.map(m => ({
                 index: m.mIndex,
                 title: m.title,
-                moduleDirName: m.moduleDirName
+                moduleDirName: m.moduleDirName,
+                root: modules.find(mod => mod.index === m.mIndex)?.root
             })),
             updatedAt: new Date().toISOString()
         };
@@ -379,8 +383,10 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
         for (let i = 0; i < modules.length; i++) {
             const module = modules[i];
             const mInfo = courseInfo[i];
-            const moduleDir = path.join(baseOutputDir, mInfo.moduleDirName);
-            await fs.ensureDir(moduleDir);
+            const moduleDir = mInfo.moduleDirName ? path.join(baseOutputDir, mInfo.moduleDirName) : baseOutputDir;
+            if (mInfo.moduleDirName) {
+                await fs.ensureDir(moduleDir);
+            }
 
             for (const lesson of module.lessons) {
                 const lIndex = lesson.index ?? 1;
@@ -460,6 +466,13 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                 const results = await Promise.all(resTasks);
                                 results.forEach(r => { if (r) resourcesHtml.push(r); });
                             }
+
+                            const isRootLesson = mInfo.moduleDirName.length === 0;
+                            const groupLink = isRootLesson ? '../../index.html' : '../../../index.html';
+                            const courseLink = isRootLesson ? '../index.html' : '../../index.html';
+                            const moduleBreadcrumb = isRootLesson
+                                ? ''
+                                : `<span>/</span><span>${module.title}</span>`;
 
                             const htmlContent = `
                             <!DOCTYPE html>
@@ -546,11 +559,10 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                             <body>
                                 <div class="page">
                                     <div class="breadcrumb">
-                                        <a href="../../../index.html">${groupName}</a>
+                                        <a href="${groupLink}">${groupName}</a>
                                         <span>/</span>
-                                        <a href="../../index.html">${courseName}</a>
-                                        <span>/</span>
-                                        <span>${module.title}</span>
+                                        <a href="${courseLink}">${courseName}</a>
+                                        ${moduleBreadcrumb}
                                         <span>/</span>
                                         <span>${lessonData.title}</span>
                                     </div>
@@ -569,7 +581,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                         </div>
                                         ` : ''}
                                         <div class="nav">
-                                            <a href="../../index.html">Back to Course Index</a>
+                                            <a href="${courseLink}">Back to Course Index</a>
                                         </div>
                                     </div>
                                 </div>
@@ -588,7 +600,9 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                 lessonIndex: lIndex,
                                 moduleDirName: mInfo.moduleDirName,
                                 lessonDirName,
-                                relativePath: `${mInfo.moduleDirName}/${lessonDirName}/index.html`,
+                                relativePath: mInfo.moduleDirName
+                                    ? `${mInfo.moduleDirName}/${lessonDirName}/index.html`
+                                    : `${lessonDirName}/index.html`,
                                 hasVideo,
                                 resourcesCount: resourcesHtml.length,
                                 updatedAt: new Date().toISOString()

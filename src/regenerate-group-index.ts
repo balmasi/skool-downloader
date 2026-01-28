@@ -39,11 +39,22 @@ async function countLessons(coursePath: string) {
     let lessonsCount = 0;
 
     const moduleEntries = await fs.readdir(coursePath, { withFileTypes: true });
-    const moduleDirs = moduleEntries.filter(
-        entry => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'assets'
-    );
+    const moduleDirs: typeof moduleEntries = [];
+    const rootLessonDirs: typeof moduleEntries = [];
 
-    modulesCount = moduleDirs.length;
+    for (const entry of moduleEntries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'assets') continue;
+        const entryPath = path.join(coursePath, entry.name);
+        const indexPath = path.join(entryPath, 'index.html');
+        const manifestPath = path.join(entryPath, 'lesson.json');
+        if (await fs.pathExists(indexPath) || await fs.pathExists(manifestPath)) {
+            rootLessonDirs.push(entry);
+        } else {
+            moduleDirs.push(entry);
+        }
+    }
+
+    modulesCount = moduleDirs.length + (rootLessonDirs.length > 0 ? 1 : 0);
 
     for (const moduleDir of moduleDirs) {
         const modulePath = path.join(coursePath, moduleDir.name);
@@ -58,6 +69,15 @@ async function countLessons(coursePath: string) {
             if (await fs.pathExists(indexPath) || await fs.pathExists(manifestPath)) {
                 lessonsCount += 1;
             }
+        }
+    }
+
+    for (const lessonDir of rootLessonDirs) {
+        const lessonPath = path.join(coursePath, lessonDir.name);
+        const indexPath = path.join(lessonPath, 'index.html');
+        const manifestPath = path.join(lessonPath, 'lesson.json');
+        if (await fs.pathExists(indexPath) || await fs.pathExists(manifestPath)) {
+            lessonsCount += 1;
         }
     }
 

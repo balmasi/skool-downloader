@@ -26,6 +26,7 @@ export interface Module {
     title: string;
     index: number;
     lessons: Lesson[];
+    root?: boolean;
 }
 
 export interface ClassroomResult {
@@ -163,24 +164,53 @@ export class Scraper {
         this.logger.info(`🎓 Course detected: ${courseName}`);
 
         // Skool Hierarchy:
-        // Set (Module Group) -> Children (Modules/Lessons)
+        // Children can be sets (modules) or standalone lessons.
+        const modules: Module[] = [];
+        let rootModule: Module | null = null;
 
-        const modules: Module[] = courseData.children.map((set: any, mIdx: number) => {
-            const setInfo = set.course || {};
-            const setTitle = setInfo.metadata?.title || setInfo.name || 'Untitled Section';
+        const childNodes = Array.isArray(courseData.children) ? courseData.children : [];
+        childNodes.forEach((node: any) => {
+            if (node?.children && node.children.length > 0) {
+                const setInfo = node.course || {};
+                const setTitle = setInfo.metadata?.title || setInfo.name || 'Untitled Section';
 
-            // In Skool, a "set" contains "children" which are the actual modules/lessons
-            const lessons: Lesson[] = (set.children || []).map((mod: any, lIdx: number) => {
-                const modInfo = mod.course || {};
-                return {
-                    id: modInfo.id,
-                    title: modInfo.metadata?.title || modInfo.name || 'Untitled Lesson',
-                    url: `${cleanUrl}?md=${modInfo.id}`,
-                    index: lIdx + 1
-                };
-            }).filter((l: Lesson) => l.id);
+                const lessons: Lesson[] = (node.children || []).map((mod: any, lIdx: number) => {
+                    const modInfo = mod.course || {};
+                    return {
+                        id: modInfo.id,
+                        title: modInfo.metadata?.title || modInfo.name || 'Untitled Lesson',
+                        url: `${cleanUrl}?md=${modInfo.id}`,
+                        index: lIdx + 1
+                    };
+                }).filter((l: Lesson) => l.id);
 
-            return { title: setTitle, index: mIdx + 1, lessons };
+                modules.push({
+                    title: setTitle,
+                    index: modules.length + 1,
+                    lessons
+                });
+                return;
+            }
+
+            const lessonInfo = node?.course || {};
+            if (lessonInfo?.id) {
+                if (!rootModule) {
+                    rootModule = {
+                        title: 'Lessons',
+                        index: modules.length + 1,
+                        lessons: [],
+                        root: true
+                    };
+                    modules.push(rootModule);
+                }
+
+                rootModule.lessons.push({
+                    id: lessonInfo.id,
+                    title: lessonInfo.metadata?.title || lessonInfo.name || 'Untitled Lesson',
+                    url: `${cleanUrl}?md=${lessonInfo.id}`,
+                    index: rootModule.lessons.length + 1
+                });
+            }
         });
 
         return {
