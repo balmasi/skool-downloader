@@ -2,7 +2,7 @@
   "name": "skool-downloader",
   "version": "1.0.0",
   "type": "module",
-  "description": "",
+  "description": "CLI tool that creates offline backups of Skool.com courses, including video, assets, and attachments.",
   "main": "index.js",
   "bin": {
     "skool": "./bin/skool.js"
@@ -10,12 +10,25 @@
   "scripts": {
     "skool": "tsx src/cli.ts",
     "login": "tsx src/cli.ts login",
-    "regenerate-index": "tsx src/cli.ts regenerate-index",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "regenerate-index": "tsx src/cli.ts regenerate-index"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "balmasi",
+  "license": "CC-BY-NC-4.0",
+  "keywords": [
+    "skool",
+    "downloader",
+    "offline",
+    "yt-dlp",
+    "playwright"
+  ],
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE",
+    "package.json",
+    "tsconfig.json"
+  ],
   "dependencies": {
     "@clack/prompts": "^0.11.0",
     "axios": "^1.13.3",

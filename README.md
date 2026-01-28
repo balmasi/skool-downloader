@@ -39,6 +39,18 @@ npm run login
 ```
 *A browser window will open. Log in to your Skool account. Once you see your dashboard, the script will save your session and close the browser.*
 
+### 3. Using NPX
+
+This package is published on npm, so you can run the CLI without installing anything locally:
+
+```bash
+npx skool-downloader
+```
+
+If you prefer to stay completely local (and allow offline development), run `npm install` once and use `npm run skool` as shown below.
+
+If you prefer to stay completely local (and allow offline development), run `npm install` once and use `npm run skool` as shown below.
+
 ### 3. Downloading a Course
 
 To download an entire classroom:
@@ -46,6 +58,21 @@ To download an entire classroom:
 ```bash
 npm run skool https://www.skool.com/your-community/classroom/course-id
 ```
+
+To download **all courses** in a community classroom:
+
+```bash
+npm run skool https://www.skool.com/your-community/classroom
+```
+
+To download **multiple courses** interactively:
+
+```bash
+npm run skool
+```
+Then choose **Download multiple courses** and select the courses you want.
+
+You can also run `npx skool-downloader` to enter the same interactive menu.
 
 To download only a **single lesson**:
 
@@ -82,3 +109,7 @@ npm run regenerate-index
 ## 🛡 Disclaimer
 
 This tool is for **personal backup and offline viewing purposes only**. Please respect the content creators' terms of service and intellectual property rights. Do not distribute downloaded content without permission.
+
+## 📄 License
+
+This project is licensed under the **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)** license. See `LICENSE` for the full legal code.
