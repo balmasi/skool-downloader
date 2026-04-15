@@ -5,11 +5,34 @@ import axios from 'axios';
 import { Readable } from 'stream';
 import { createConsoleLogger, type Logger } from './logger.js';
 import { COOKIES_TXT_PATH } from './auth.js';
+import { classifyVideoSource, extractMuxPlaybackId, type VideoFingerprint } from './fingerprint.js';
 
 const YTDlpWrap = (YTDlpWrapPkg as any).default || YTDlpWrapPkg;
 
 const BIN_DIR = path.join(process.cwd(), 'bin');
 const YTDLP_PATH = path.join(BIN_DIR, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+
+function getYtDlpAssetName(): string {
+    if (process.platform === 'win32') return 'yt-dlp.exe';
+    if (process.platform === 'darwin') return 'yt-dlp_macos';
+    // Linux
+    const arch = process.arch;
+    if (arch === 'arm64' || arch === 'arm') return 'yt-dlp_linux_aarch64';
+    return 'yt-dlp_linux';
+}
+
+async function downloadYtDlp(destPath: string, logger: Logger): Promise<void> {
+    const releases = await YTDlpWrap.getGithubReleases(1, 1);
+    const version = releases[0].tag_name;
+    const assetName = getYtDlpAssetName();
+    const url = `https://github.com/yt-dlp/yt-dlp/releases/download/${version}/${assetName}`;
+    logger.info(`Downloading yt-dlp binary (${assetName}) from GitHub...`);
+    await YTDlpWrap.downloadFile(url, destPath);
+    if (process.platform !== 'win32') {
+        await fs.chmod(destPath, 0o755);
+    }
+}
+
 export class Downloader {
     private ytDlp: any = null;
     private initPromise: Promise<void> | null = null;
@@ -21,18 +44,14 @@ export class Downloader {
 
     async init() {
         if (this.initPromise) return this.initPromise;
-        
+
         this.initPromise = (async () => {
             if (!fs.existsSync(BIN_DIR)) {
                 await fs.ensureDir(BIN_DIR);
             }
 
             if (!fs.existsSync(YTDLP_PATH)) {
-                this.logger.info('Downloading yt-dlp binary locally...');
-                await YTDlpWrap.downloadFromGithub(YTDLP_PATH);
-                if (process.platform !== 'win32') {
-                    await fs.chmod(YTDLP_PATH, 0o755);
-                }
+                await downloadYtDlp(YTDLP_PATH, this.logger);
             }
             this.ytDlp = new YTDlpWrap(YTDLP_PATH);
         })();
@@ -66,7 +85,7 @@ export class Downloader {
             '--add-header', 'Referer:https://www.skool.com/',
             '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             '--merge-output-format', 'mp4',
-            '-N', '16',
+            '-N', '4',
             '--postprocessor-args', 'ffmpeg:-movflags +faststart'
         ];
 
@@ -80,6 +99,47 @@ export class Downloader {
         } catch (error) {
             this.logger.error(`Error downloading video: ${String(error)}`);
             throw error;
+        }
+    }
+
+    async getVideoFingerprint(url: string): Promise<VideoFingerprint | null> {
+        if (!this.ytDlp) await this.init();
+
+        const source = classifyVideoSource(url);
+        const playbackId = extractMuxPlaybackId(url);
+
+        const args = [
+            url,
+            '-j',
+            '--skip-download',
+            '--no-warnings',
+            '--no-check-certificates',
+            '--add-header', 'Referer:https://www.skool.com/',
+            '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        ];
+
+        if (fs.existsSync(COOKIES_TXT_PATH)) {
+            args.push('--cookies', COOKIES_TXT_PATH);
+        }
+
+        try {
+            const stdout: string = await this.ytDlp!.execPromise(args);
+            const firstLine = stdout.split('\n').find(line => line.trim().startsWith('{'));
+            if (!firstLine) return null;
+            const meta = JSON.parse(firstLine);
+            const durationRaw = meta.duration;
+            const durationSec = typeof durationRaw === 'number' && Number.isFinite(durationRaw)
+                ? Math.round(durationRaw)
+                : undefined;
+            return {
+                source,
+                ytDlpId: typeof meta.id === 'string' ? meta.id : undefined,
+                durationSec,
+                playbackId
+            };
+        } catch (err) {
+            this.logger.warn(`    ⚠️ Could not fetch video fingerprint: ${String(err).split('\n')[0]}`);
+            return null;
         }
     }
 

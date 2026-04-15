@@ -19,6 +19,7 @@ export interface Lesson {
     index?: number;
     contentHtml?: string;
     videoLink?: string;
+    muxPlaybackId?: string;
     resources?: Resource[];
 }
 
@@ -519,12 +520,23 @@ export class Scraper {
             }
         }
 
+        let muxPlaybackId: string | undefined;
+        if (vLink && /stream\.video\.skool\.com|mux\.com/.test(vLink)) {
+            try {
+                const match = new URL(vLink).pathname.match(/\/([^\/]+?)\.m3u8$/);
+                if (match) muxPlaybackId = match[1];
+            } catch {
+                // ignore malformed URLs
+            }
+        }
+
         return {
             id: md || foundLesson?.id || '',
             title: metadata.title || foundLesson?.name || '',
             url: url,
             contentHtml: body,
             videoLink: vLink,
+            muxPlaybackId,
             resources: resources
         };
     }
