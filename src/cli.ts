@@ -207,7 +207,9 @@ function buildCourseHint(course: CourseListItem) {
 }
 
 function filterAccessibleCourses(courses: CourseListItem[]) {
-    const isLocked = (course: CourseListItem) => course.hasAccess === false || (course.privacy ?? 0) > 0;
+    // Only skip courses explicitly marked hasAccess=false.
+    // privacy > 0 means member-only visibility, not inaccessible — the user may well be a member.
+    const isLocked = (course: CourseListItem) => course.hasAccess === false;
     const accessible = courses.filter(course => !isLocked(course));
     const locked = courses.filter(course => isLocked(course));
     return { accessible, locked };
