@@ -18,10 +18,11 @@ type CliArgs = {
     mode?: DownloadMode;
     lessonId?: string | null;
     regenerateDir?: string;
+    update?: boolean;
 };
 
 function showHelp() {
-    console.log(`\nSkool Downloader\n\nUsage:\n  skool                          Interactive mode\n  skool login                    Log in to Skool\n  skool <classroom-url>          Download a course\n  skool <group-classroom-url>    Download all courses in a community\n  skool <lesson-url>             Download a single lesson (URL with ?md=)\n  skool regenerate-index         Regenerate all course indexes\n\nOptions:\n  -o, --output <dir>             Output directory (course root)\n  -c, --concurrency <number>     Lesson concurrency (default: 8)\n  --course                       Force course mode (ignore ?md=)\n  --lesson                       Force lesson mode\n  --lesson-id <id>               Explicit lesson id\n  -h, --help                     Show help\n`);
+    console.log(`\nSkool Downloader\n\nUsage:\n  skool                          Interactive mode\n  skool login                    Log in to Skool\n  skool <classroom-url>          Download a course\n  skool <group-classroom-url>    Download all courses in a community\n  skool <lesson-url>             Download a single lesson (URL with ?md=)\n  skool regenerate-index         Regenerate all course indexes\n\nOptions:\n  -o, --output <dir>             Output directory (course root)\n  -c, --concurrency <number>     Lesson concurrency (default: 8)\n  --course                       Force course mode (ignore ?md=)\n  --lesson                       Force lesson mode\n  --lesson-id <id>               Explicit lesson id\n  --update                       Check existing lessons for updates and re-download only changed content\n  -h, --help                     Show help\n`);
 }
 
 function parseArgs(args: string[]): CliArgs {
@@ -49,6 +50,10 @@ function parseArgs(args: string[]): CliArgs {
         }
         if (arg === '--lesson') {
             parsed.mode = 'lesson';
+            continue;
+        }
+        if (arg === '--update' || arg === '--refresh') {
+            parsed.update = true;
             continue;
         }
         if (arg === '--lesson-id') {
@@ -207,7 +212,9 @@ function buildCourseHint(course: CourseListItem) {
 }
 
 function filterAccessibleCourses(courses: CourseListItem[]) {
-    const isLocked = (course: CourseListItem) => course.hasAccess === false || (course.privacy ?? 0) > 0;
+    // Only skip courses explicitly marked hasAccess=false.
+    // privacy > 0 means member-only visibility, not inaccessible — the user may well be a member.
+    const isLocked = (course: CourseListItem) => course.hasAccess === false;
     const accessible = courses.filter(course => !isLocked(course));
     const locked = courses.filter(course => isLocked(course));
     return { accessible, locked };
@@ -261,6 +268,7 @@ async function runInteractive() {
     }
 
     let concurrency = 8;
+    let updateMode = false;
     if (actionValue === 'download-course' || actionValue === 'download-multi') {
         const concurrencyChoice = await select({
             message: 'Lesson concurrency',
@@ -274,6 +282,13 @@ async function runInteractive() {
         });
         handleCancel(concurrencyChoice);
         concurrency = Number(concurrencyChoice);
+
+        const updateChoice = await confirm({
+            message: 'Check existing lessons for updates? (re-downloads only changed content)',
+            initialValue: false
+        });
+        handleCancel(updateChoice);
+        updateMode = Boolean(updateChoice);
     }
 
     const interactiveLogger = buildInteractiveLogger();
@@ -363,6 +378,7 @@ async function runInteractive() {
                     logger: interactiveLogger,
                     suppressIndexLogs: true,
                     runTasks,
+                    update: updateMode,
                     callbacks: {
                         onCourseStart: ({ modulesCount, lessonsCount, outputDir: resolvedDir }) => {
                             log.info(`${modulesCount} modules · ${lessonsCount} lessons`);
@@ -417,6 +433,7 @@ async function runInteractive() {
         logger: interactiveLogger,
         suppressIndexLogs: true,
         runTasks,
+        update: updateMode,
         callbacks: {
             onCourseStart: ({ courseName, groupName, modulesCount, lessonsCount, outputDir: resolvedDir, targetLessonId, lessonDestination }) => {
                 log.info(`${pc.bold(courseName)} ${groupName ? pc.dim(`· ${groupName}`) : ''}`);
@@ -531,7 +548,8 @@ async function runWithArgs(args: CliArgs) {
                         url: course.url,
                         outputDir: outputRoot ? resolveCourseOutputDir(outputRoot, library.groupName, course.title) : undefined,
                         concurrency: args.concurrency,
-                        mode: 'course'
+                        mode: 'course',
+                        update: args.update
                     });
                 } catch (err) {
                     failedCourses += 1;
@@ -550,7 +568,8 @@ async function runWithArgs(args: CliArgs) {
             outputDir: args.outputDir,
             concurrency: args.concurrency,
             mode: args.mode,
-            lessonId: args.lessonId
+            lessonId: args.lessonId,
+            update: args.update
         });
         return;
     }

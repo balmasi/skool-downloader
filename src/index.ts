@@ -3,6 +3,7 @@ import { Downloader } from './downloader.js';
 import { regenerateIndex } from './regenerate-index.js';
 import { regenerateGroupIndex } from './regenerate-group-index.js';
 import { createConsoleLogger, type Logger } from './logger.js';
+import { computeContentHash, videoFingerprintsEqual, type VideoFingerprint } from './fingerprint.js';
 import fs from 'fs-extra';
 import path from 'path';
 import pLimit from 'p-limit';
@@ -68,6 +69,8 @@ type LessonManifest = {
     hasVideo: boolean;
     resourcesCount: number;
     updatedAt: string;
+    contentHash?: string;
+    videoFingerprint?: VideoFingerprint;
 };
 
 export type DownloadMode = 'auto' | 'course' | 'lesson';
@@ -122,6 +125,7 @@ export type DownloadOptions = {
     callbacks?: DownloadCallbacks;
     suppressIndexLogs?: boolean;
     runTasks?: (tasks: LessonTask[], concurrency: number) => Promise<void>;
+    update?: boolean;
 };
 
 export type DownloadSummary = {
@@ -414,17 +418,70 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                             await fs.ensureDir(lessonDir);
                             const lessonData = await scraper.extractLessonData(lesson.url);
 
+                            const manifestPath = path.join(lessonDir, 'lesson.json');
+                            let oldManifest: LessonManifest | null = null;
+                            if (fs.existsSync(manifestPath)) {
+                                try { oldManifest = await fs.readJson(manifestPath) as LessonManifest; }
+                                catch { oldManifest = null; }
+                            }
+
+                            const newContentHash = computeContentHash(lessonData);
+
                             updateStatus('Localizing images...');
                             const localizedHtml = await downloader.localizeImages(lessonData.contentHtml || '', lessonDir);
 
                             let hasVideo = false;
+                            let videoFingerprint: VideoFingerprint | undefined = oldManifest?.videoFingerprint;
                             if (lessonData.videoLink) {
-                                try {
-                                    updateStatus('Downloading video...');
-                                    await downloader.downloadVideo(lessonData.videoLink, lessonDir, 'video');
-                                    hasVideo = true;
-                                } catch (err) {
-                                    logger.warn(`    ⚠️ Failed to download video for ${lesson.title}`);
+                                const videoPath = path.join(lessonDir, 'video.mp4');
+                                const videoExistsBefore = fs.existsSync(videoPath) && fs.statSync(videoPath).size > 0;
+
+                                if (options.update && videoExistsBefore) {
+                                    updateStatus('Checking video freshness...');
+                                    const newFp = await downloader.getVideoFingerprint(lessonData.videoLink);
+                                    if (newFp && lessonData.muxPlaybackId && !newFp.playbackId) {
+                                        newFp.playbackId = lessonData.muxPlaybackId;
+                                    }
+
+                                    if (newFp && !videoFingerprintsEqual(newFp, oldManifest?.videoFingerprint)) {
+                                        logger.info(`    🔄 Video changed — re-downloading`);
+                                        const backupPath = `${videoPath}.bak`;
+                                        await fs.move(videoPath, backupPath, { overwrite: true });
+                                        try {
+                                            updateStatus('Downloading video...');
+                                            await downloader.downloadVideo(lessonData.videoLink, lessonDir, 'video');
+                                            await fs.remove(backupPath);
+                                            hasVideo = true;
+                                            videoFingerprint = newFp;
+                                        } catch (err) {
+                                            logger.warn(`    ⚠️ Video re-download failed; restoring previous file`);
+                                            if (fs.existsSync(backupPath)) {
+                                                await fs.move(backupPath, videoPath, { overwrite: true });
+                                            }
+                                            hasVideo = true;
+                                            videoFingerprint = oldManifest?.videoFingerprint;
+                                        }
+                                    } else {
+                                        if (newFp) {
+                                            logger.info(`    ⏭️  Video unchanged (fingerprint match)`);
+                                        } else {
+                                            logger.warn(`    ⚠️ Could not verify video freshness; keeping existing file`);
+                                        }
+                                        hasVideo = true;
+                                        videoFingerprint = newFp ?? oldManifest?.videoFingerprint;
+                                    }
+                                } else {
+                                    try {
+                                        updateStatus('Downloading video...');
+                                        await downloader.downloadVideo(lessonData.videoLink, lessonDir, 'video');
+                                        hasVideo = true;
+                                        if (!videoExistsBefore) {
+                                            const fp = await downloader.getVideoFingerprint(lessonData.videoLink);
+                                            if (fp) videoFingerprint = fp;
+                                        }
+                                    } catch (err) {
+                                        logger.warn(`    ⚠️ Failed to download video for ${lesson.title}`);
+                                    }
                                 }
                             }
 
@@ -605,7 +662,9 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                     : `${lessonDirName}/index.html`,
                                 hasVideo,
                                 resourcesCount: resourcesHtml.length,
-                                updatedAt: new Date().toISOString()
+                                updatedAt: new Date().toISOString(),
+                                contentHash: newContentHash,
+                                videoFingerprint
                             };
 
                             await writeAtomicJson(path.join(lessonDir, 'lesson.json'), lessonManifest);
