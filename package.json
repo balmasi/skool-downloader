@@ -8,6 +8,8 @@
     "skool": "./bin/skool.js"
   },
   "scripts": {
+    "typecheck": "tsc --noEmit",
+    "prepare": "husky || true",
     "skool": "tsx src/cli.ts",
     "login": "tsx src/cli.ts login",
     "regenerate-index": "tsx src/cli.ts regenerate-index"
@@ -43,6 +45,7 @@
     "@types/axios": "^0.9.36",
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^25.0.10",
+    "husky": "^9.1.7",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

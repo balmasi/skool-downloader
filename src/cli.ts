@@ -184,10 +184,8 @@ function createTaskRunner() {
             }
         );
 
+        // run() tears the renderer down itself, so there is nothing to end here.
         await list.run();
-        if (typeof list.renderer?.end === 'function') {
-            list.renderer.end();
-        }
         process.stdout.write('\n');
         await new Promise(resolve => setTimeout(resolve, 0));
     };
