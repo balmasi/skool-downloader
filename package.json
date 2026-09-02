@@ -36,7 +36,7 @@
     "listr2": "^10.1.0",
     "p-limit": "^7.2.0",
     "picocolors": "^1.1.1",
-    "playwright": "^1.58.0",
+    "playwright": "^1.62.1",
     "yt-dlp-wrap": "^2.3.12"
   },
   "devDependencies": {
