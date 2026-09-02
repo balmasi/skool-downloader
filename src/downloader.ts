@@ -80,6 +80,13 @@ export class Downloader {
         if (this.initPromise) return this.initPromise;
         
         this.initPromise = (async () => {
+            // Resolved before yt-dlp is set up, for two reasons. A missing
+            // ffmpeg fails while this.ytDlp is still null, so every later call
+            // re-awaits this rejected promise instead of finding ytDlp set,
+            // skipping init, and quietly downloading unmerged streams. It also
+            // reports the problem before the 36 MB yt-dlp download, not after.
+            this.ffmpegPath = await resolveFfmpegPath();
+
             if (!fs.existsSync(BIN_DIR)) {
                 await fs.ensureDir(BIN_DIR);
             }
@@ -92,8 +99,6 @@ export class Downloader {
                 }
             }
             this.ytDlp = new YTDlpWrap(YTDLP_PATH);
-
-            this.ffmpegPath = await resolveFfmpegPath();
         })();
 
         return this.initPromise;
