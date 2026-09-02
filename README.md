@@ -12,6 +12,7 @@ This tool downloads video content, localizes images, preserves course attachment
 - **📎 Resource Preservation:** Automatically fetches course attachments (PDFs, DOCX, etc.) via Skool's API.
 - **🎯 Single Lesson Mode:** Download a whole course or just a single lesson using a specific URL.
 - **🛠 Interrupted Download Recovery:** Skips already downloaded files and includes a tool to regenerate the index page.
+- **♻️ Self-Updating `yt-dlp`:** Checks once a day for a newer `yt-dlp` and installs it before downloading, so video sites that change how they serve media keep working. The previous copy is kept for a one-command rollback.
 
 ## 🛠 Prerequisites
 
@@ -117,6 +118,36 @@ downloads/
 ```
 
 ## 🔧 Advanced
+
+### Keeping `yt-dlp` current
+
+`yt-dlp` is only as good as its extractors, and those break whenever a video
+site changes how it serves media. An old copy fails with errors such as
+`HTTP Error 403: Forbidden` or `Requested format is not available`.
+
+The tool handles this by itself. Before the first lesson of a run it looks at
+the installed version, and if that build is more than 30 days old it checks
+GitHub for a newer release and installs it. The check runs at most once a day,
+and never more than once per run. If GitHub cannot be reached, the run
+continues on the copy you already have.
+
+To update by hand:
+
+```bash
+npm run skool update
+# or, if installed globally
+skool update
+```
+
+Each update keeps the copy it replaced. If a new `yt-dlp` release behaves worse
+than the old one, go back to it:
+
+```bash
+skool update --rollback
+```
+
+To turn the automatic check off, set `SKOOL_NO_YTDLP_UPDATE=1`. You can still
+run `skool update` when you want to.
 
 ### Regenerating the Index
 If you manually move files or skip lessons, you can regenerate the master `index.html` file based on the current contents of your `downloads/` folder:

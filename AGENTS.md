@@ -8,7 +8,7 @@ The goal of this project is to provide a robust, platform-independent tool for c
 ### Core Tech Stack
 - **TypeScript / Node.js**: Modern ESM environment.
 - **Playwright**: Used for scraping and the initial manual authentication flow.
-- **yt-dlp**: Handled via `yt-dlp-wrap`. It's downloaded on first run into a per-user cache folder (`resolveCacheDir()` in `src/downloader.ts`, override with `SKOOL_DOWNLOADER_CACHE_DIR`) to avoid system-wide installations. It is deliberately not stored under the current directory or the package root.
+- **yt-dlp**: Handled via `yt-dlp-wrap`. It's downloaded on first run into a per-user cache folder (`resolveCacheDir()` in `src/downloader.ts`, override with `SKOOL_DOWNLOADER_CACHE_DIR`) to avoid system-wide installations. It is deliberately not stored under the current directory or the package root. The binary is kept current automatically; see **Keeping yt-dlp current** below.
 - **Axios**: For direct asset (image) downloads.
 
 ### Key Technical Strategies
@@ -26,14 +26,21 @@ The goal of this project is to provide a robust, platform-independent tool for c
    Skool's native Mux player requires a "play" click to generate authenticated HLS manifest URLs. The scraper simulates this interaction and monitors performance entries to extract the signed `.m3u8` link.
 7. **Resource/Attachment Downloads**:
    Course attachments (PDFs, DOCX, etc.) are downloaded using direct API calls to `https://api2.skool.com/files/{file_id}/download-url?expire=28800`. This is more reliable than DOM interaction and returns signed CloudFront URLs for downloading.
-8. **High-Performance Downloads**:
+8. **Keeping yt-dlp current**:
+   A pinned yt-dlp rots, because its value is almost entirely in extractors that break when a video host changes (issue #14). `Downloader.init()` reads the installed version, which is a release date, and if it is older than `STALE_AFTER_DAYS` it compares against the newest GitHub release and installs it. A stamp file (`.yt-dlp-check.json`) limits this to one check per day; `init()` is memoised, so it is also at most once per run. Three rules matter when changing this code:
+   - The update **blocks** the run instead of happening in the background. A background refresh would leave the current run on the binary that is already broken, which is the failure being fixed.
+   - A download is written to a `.tmp` path and executed there before it is renamed into place. `YTDlpWrap.downloadFromGithub` is not used: it writes the response body before checking the status code, and attaches no error handler to the write stream, so a 404 or a read-only folder yields a corrupt binary or an uncaught exception. `downloadFile()` in `src/downloader.ts` replaces it.
+   - A failed update must never fail a download. Everything except an unusable binary is caught, logged and continued past.
+
+   The copy being replaced is kept as `yt-dlp.prev` for `skool update --rollback`. `SKOOL_NO_YTDLP_UPDATE=1` switches the automatic check off.
+9. **High-Performance Downloads**:
    The downloader is optimized with `-N 16` for parallel fragment fetching and `ffmpeg` post-processing (`+faststart`) for instant in-browser playback.
 
 ## Project Structure
 - `src/auth.ts`: Handles the manual login flow and cookie conversion.
 - `src/scraper.ts`: Navigates the course tree and parses lesson metadata from Next.js state.
 - `src/downloader.ts`: Wrapper for `yt-dlp` and logic for image localization and resource downloads.
-- `src/cli.ts`: Interactive CLI entry point (login, download course, download single lesson, regenerate index). Uses Listr2 to run lesson downloads concurrently with per-lesson status output.
+- `src/cli.ts`: Interactive CLI entry point (login, download course, download single lesson, regenerate index, update yt-dlp). Uses Listr2 to run lesson downloads concurrently with per-lesson status output.
 - `src/index.ts`: Core download orchestrator. Handles course parsing, output path resolution, lesson processing, and manifest/index generation. Exposes callbacks + task runner hooks for the CLI.
 - **Single Lesson Extraction**: The tool detects `?md=` or `?lesson=` in the input URL to download only a specific lesson instead of the entire course, and reports the exact destination path.
 - **Native Video Handling**: Automates interaction with the Mux player to capture signed tokens.
