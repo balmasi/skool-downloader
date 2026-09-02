@@ -6,22 +6,24 @@ import { Listr, PRESET_TIMER } from 'listr2';
 import { downloadCourse, type DownloadMode } from './index.js';
 import { login, getAuthStatus } from './auth.js';
 import { regenerateIndex } from './regenerate-index.js';
+import { updateYtDlp, rollbackYtDlp, getYtDlpPaths } from './downloader.js';
 import { regenerateGroupIndex } from './regenerate-group-index.js';
 import { Scraper, type CourseLibraryResult, type CourseListItem } from './scraper.js';
 import type { Logger } from './logger.js';
 
 type CliArgs = {
-    command?: 'login' | 'download' | 'regenerate-index' | 'help';
+    command?: 'login' | 'download' | 'regenerate-index' | 'update' | 'help';
     url?: string;
     outputDir?: string;
     concurrency?: number;
     mode?: DownloadMode;
     lessonId?: string | null;
     regenerateDir?: string;
+    rollback?: boolean;
 };
 
 function showHelp() {
-    console.log(`\nSkool Downloader\n\nUsage:\n  skool                          Interactive mode\n  skool login                    Log in to Skool\n  skool <classroom-url>          Download a course\n  skool <group-classroom-url>    Download all courses in a community\n  skool <lesson-url>             Download a single lesson (URL with ?md=)\n  skool regenerate-index         Regenerate all course indexes\n\nOptions:\n  -o, --output <dir>             Output directory (course root)\n  -c, --concurrency <number>     Lesson concurrency (default: 8)\n  --course                       Force course mode (ignore ?md=)\n  --lesson                       Force lesson mode\n  --lesson-id <id>               Explicit lesson id\n  -h, --help                     Show help\n`);
+    console.log(`\nSkool Downloader\n\nUsage:\n  skool                          Interactive mode\n  skool login                    Log in to Skool\n  skool <classroom-url>          Download a course\n  skool <group-classroom-url>    Download all courses in a community\n  skool <lesson-url>             Download a single lesson (URL with ?md=)\n  skool regenerate-index         Regenerate all course indexes\n  skool update                   Update the yt-dlp binary to the latest release\n\nOptions:\n  -o, --output <dir>             Output directory (course root)\n  -c, --concurrency <number>     Lesson concurrency (default: 8)\n  --course                       Force course mode (ignore ?md=)\n  --lesson                       Force lesson mode\n  --lesson-id <id>               Explicit lesson id\n  --rollback                     With 'update', restore the previous yt-dlp\n  -h, --help                     Show help\n\nEnvironment:\n  SKOOL_DOWNLOADER_CACHE_DIR     Where the yt-dlp binary is kept\n  SKOOL_NO_YTDLP_UPDATE=1        Never check for a newer yt-dlp automatically\n`);
 }
 
 function parseArgs(args: string[]): CliArgs {
@@ -37,6 +39,14 @@ function parseArgs(args: string[]): CliArgs {
         if (arg === 'regenerate-index') {
             parsed.command = 'regenerate-index';
             parsed.regenerateDir = args[i + 1];
+            continue;
+        }
+        if (arg === 'update') {
+            parsed.command = 'update';
+            continue;
+        }
+        if (arg === '--rollback') {
+            parsed.rollback = true;
             continue;
         }
         if (arg === '-h' || arg === '--help') {
@@ -228,11 +238,12 @@ async function runInteractive() {
             { value: 'download-lesson', label: 'Download a single lesson' },
             { value: 'login', label: 'Log in to Skool' },
             { value: 'regenerate-index', label: 'Regenerate all course indexes' },
+            { value: 'update', label: 'Update the yt-dlp binary' },
             { value: 'exit', label: 'Exit' }
         ]
     });
     handleCancel(action);
-    const actionValue = action as 'download-course' | 'download-multi' | 'download-lesson' | 'login' | 'regenerate-index' | 'exit';
+    const actionValue = action as 'download-course' | 'download-multi' | 'download-lesson' | 'login' | 'regenerate-index' | 'update' | 'exit';
 
     if (actionValue === 'exit') {
         outro('See you next time.');
@@ -251,6 +262,12 @@ async function runInteractive() {
     if (actionValue === 'regenerate-index') {
         await regenerateAllIndexes();
         outro('Indexes regenerated.');
+        return;
+    }
+
+    if (actionValue === 'update') {
+        await runYtDlpUpdate(false);
+        outro('yt-dlp check finished.');
         return;
     }
 
@@ -442,6 +459,46 @@ async function runInteractive() {
     console.log(`Files are ready at:\n${summary.outputDir}`);
 }
 
+/**
+ * Manual escape hatch for the automatic staleness check. Needed when the check
+ * is switched off, when it could not reach GitHub, or when a new yt-dlp
+ * release broke something that used to work.
+ */
+async function runYtDlpUpdate(rollback: boolean) {
+    const paths = getYtDlpPaths();
+
+    if (rollback) {
+        try {
+            const result = await rollbackYtDlp();
+            const from = result.from ? `${result.from} ` : '';
+            console.log(`\u2705 Restored yt-dlp ${from}to ${result.to}`);
+        } catch (error) {
+            console.error(`\u274c Could not roll back: ${String(error)}`);
+            process.exitCode = 1;
+        }
+        return;
+    }
+
+    console.log(`Checking for a newer yt-dlp in ${paths.binDir} ...`);
+    try {
+        const result = await updateYtDlp();
+        if (!result.changed) {
+            console.log(`\u2705 yt-dlp ${result.to} is already the latest release.`);
+            return;
+        }
+        if (result.from === null) {
+            console.log(`\u2705 Installed yt-dlp ${result.to}`);
+            return;
+        }
+        console.log(`\u2705 Updated yt-dlp from ${result.from} to ${result.to}`);
+        console.log(`   The previous copy is kept at ${paths.previousPath}`);
+        console.log('   Run `skool update --rollback` if the new one behaves worse.');
+    } catch (error) {
+        console.error(`\u274c Could not update yt-dlp: ${String(error)}`);
+        process.exitCode = 1;
+    }
+}
+
 async function regenerateAllIndexes() {
     const downloadsRoot = path.join(process.cwd(), 'downloads');
     const rootExists = await fs.pathExists(downloadsRoot);
@@ -489,6 +546,11 @@ async function runWithArgs(args: CliArgs) {
 
     if (args.command === 'login') {
         await login();
+        return;
+    }
+
+    if (args.command === 'update') {
+        await runYtDlpUpdate(Boolean(args.rollback));
         return;
     }
 
