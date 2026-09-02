@@ -8,7 +8,7 @@ The goal of this project is to provide a robust, platform-independent tool for c
 ### Core Tech Stack
 - **TypeScript / Node.js**: Modern ESM environment.
 - **Playwright**: Used for scraping and the initial manual authentication flow.
-- **yt-dlp**: Handled via `yt-dlp-wrap`. It's managed locally (downloaded to `bin/`) to avoid system-wide installations.
+- **yt-dlp**: Handled via `yt-dlp-wrap`. It's downloaded on first run into a per-user cache folder (`resolveCacheDir()` in `src/downloader.ts`, override with `SKOOL_DOWNLOADER_CACHE_DIR`) to avoid system-wide installations. It is deliberately not stored under the current directory or the package root.
 - **Axios**: For direct asset (image) downloads.
 
 ### Key Technical Strategies
@@ -38,7 +38,7 @@ The goal of this project is to provide a robust, platform-independent tool for c
 - **Single Lesson Extraction**: The tool detects `?md=` or `?lesson=` in the input URL to download only a specific lesson instead of the entire course, and reports the exact destination path.
 - **Native Video Handling**: Automates interaction with the Mux player to capture signed tokens.
 - **Resource Downloads**: Uses direct API calls to fetch signed download URLs for attachments, stored in `resources/` folder within each lesson.
-- `bin/`: Stores the platform-specific `yt-dlp` binary.
+- `bin/skool.js`: The published CLI shim. The `yt-dlp` binary lives in the per-user cache folder, not here.
 
 
 - **ffmpeg Requirement**: `yt-dlp` requires `ffmpeg` to merge high-quality video and audio streams (especially for YouTube 1080p+). To keep the project platform-independent, consider adding a local `ffmpeg` binary or a managed package like `@ffmpeg-installer/ffmpeg`.
