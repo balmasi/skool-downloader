@@ -31,7 +31,7 @@ export async function getAuthStatus(): Promise<AuthStatus> {
 
         const expiries = skoolCookies
             .map((cookie: any) => Number(cookie?.expires))
-            .filter((value) => Number.isFinite(value) && value > 0);
+            .filter((value: number) => Number.isFinite(value) && value > 0);
 
         if (expiries.length === 0) return { status: 'no-expiry' };
 
