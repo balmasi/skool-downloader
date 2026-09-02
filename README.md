@@ -6,7 +6,7 @@ This tool downloads video content, localizes images, preserves course attachment
 
 ## ✨ Features
 
-- **🚀 Smart Binary Management:** Automatically downloads the correct `yt-dlp` and `ffmpeg` binaries for your OS (Windows, macOS, Linux) and architecture (Intel, Apple Silicon ARM, Linux ARM).
+- **🚀 Smart Binary Management:** Ships the correct `ffmpeg` for your OS (Windows, macOS, Linux) and architecture (Intel, Apple Silicon ARM, Linux ARM) as an install-time dependency, and downloads `yt-dlp` on first run. If the bundled `ffmpeg` cannot be installed, an `ffmpeg` on your `PATH` is used instead.
 - **📹 High-Quality Video:** Downloads the highest available quality and applies `+faststart` for instant browser playback.
 - **📄 Asset Localization:** Downloads all lesson images locally and rewrites HTML paths for true offline 100% viewing.
 - **📎 Resource Preservation:** Automatically fetches course attachments (PDFs, DOCX, etc.) via Skool's API.
@@ -18,7 +18,18 @@ This tool downloads video content, localizes images, preserves course attachment
 - [Node.js](https://nodejs.org/) (v18 or higher recommended)
 - [npm](https://www.npmjs.com/)
 
-**Note:** No system-wide installation of `yt-dlp` or `ffmpeg` is required. The tool manages these locally in the `bin/` folder.
+**Note:** No system-wide installation of `yt-dlp` or `ffmpeg` is required. `ffmpeg` arrives with `npm install`, and `yt-dlp` is fetched into the `bin/` folder on first run.
+
+`ffmpeg` is what merges the separate video and audio streams that most high-quality sources deliver, so it is required for video downloads. It installs automatically. If that install is blocked (an offline machine, a restrictive proxy, or an unsupported platform), install `ffmpeg` yourself and the tool will pick it up from your `PATH`:
+
+```bash
+# macOS
+brew install ffmpeg
+# Windows
+winget install Gyan.FFmpeg
+# Linux
+sudo apt install ffmpeg
+```
 
 ## 🚀 Getting Started
 
