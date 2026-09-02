@@ -1,5 +1,6 @@
 import YTDlpWrapPkg from 'yt-dlp-wrap';
 import path from 'path';
+import os from 'os';
 import fs from 'fs-extra';
 import axios from 'axios';
 import { Readable } from 'stream';
@@ -8,7 +9,37 @@ import { COOKIES_TXT_PATH } from './auth.js';
 
 const YTDlpWrap = (YTDlpWrapPkg as any).default || YTDlpWrapPkg;
 
-const BIN_DIR = path.join(process.cwd(), 'bin');
+/**
+ * Resolves the folder that holds the downloaded yt-dlp binary.
+ *
+ * This is deliberately not the current directory and not the package folder.
+ * The current directory gives every folder the user runs the tool from its own
+ * 36 MB copy (issue #13). The package folder is read-only for a global install
+ * under a system prefix, and is a throwaway cache under npx.
+ *
+ * Downloads, .auth and cookies.txt stay relative to the current directory.
+ * Those belong to the user and should follow them.
+ */
+export function resolveCacheDir(): string {
+    const override = process.env.SKOOL_DOWNLOADER_CACHE_DIR;
+    if (override) return override;
+
+    const xdgCache = process.env.XDG_CACHE_HOME;
+    if (xdgCache) return path.join(xdgCache, 'skool-downloader');
+
+    if (process.platform === 'darwin') {
+        return path.join(os.homedir(), 'Library', 'Caches', 'skool-downloader');
+    }
+
+    if (process.platform === 'win32') {
+        const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+        return path.join(localAppData, 'skool-downloader');
+    }
+
+    return path.join(os.homedir(), '.cache', 'skool-downloader');
+}
+
+const BIN_DIR = path.join(resolveCacheDir(), 'bin');
 const YTDLP_PATH = path.join(BIN_DIR, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
 
 const FFMPEG_INSTALL_HINT = [
@@ -87,12 +118,10 @@ export class Downloader {
             // reports the problem before the 36 MB yt-dlp download, not after.
             this.ffmpegPath = await resolveFfmpegPath();
 
-            if (!fs.existsSync(BIN_DIR)) {
-                await fs.ensureDir(BIN_DIR);
-            }
+            await fs.ensureDir(BIN_DIR);
 
             if (!fs.existsSync(YTDLP_PATH)) {
-                this.logger.info('Downloading yt-dlp binary locally...');
+                this.logger.info(`Downloading yt-dlp binary to ${YTDLP_PATH} ...`);
                 await YTDlpWrap.downloadFromGithub(YTDLP_PATH);
                 if (process.platform !== 'win32') {
                     await fs.chmod(YTDLP_PATH, 0o755);

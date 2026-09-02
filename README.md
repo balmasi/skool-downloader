@@ -18,7 +18,15 @@ This tool downloads video content, localizes images, preserves course attachment
 - [Node.js](https://nodejs.org/) (v18 or higher recommended)
 - [npm](https://www.npmjs.com/)
 
-**Note:** No system-wide installation of `yt-dlp` or `ffmpeg` is required. `ffmpeg` arrives with `npm install`, and `yt-dlp` is fetched into the `bin/` folder on first run.
+**Note:** No system-wide installation of `yt-dlp` or `ffmpeg` is required. `ffmpeg` arrives with `npm install`, and `yt-dlp` is fetched on first run into a per-user cache folder, so it is downloaded once no matter which directory you run the tool from:
+
+| Platform | Location |
+| --- | --- |
+| macOS | `~/Library/Caches/skool-downloader/bin` |
+| Linux | `~/.cache/skool-downloader/bin` |
+| Windows | `%LOCALAPPDATA%\skool-downloader\bin` |
+
+If `XDG_CACHE_HOME` is set, it wins on every platform. Set `SKOOL_DOWNLOADER_CACHE_DIR` to choose the folder yourself; it overrides everything else. Your `downloads/`, `.auth/` and `cookies.txt` stay in the directory you run the tool from.
 
 `ffmpeg` is what merges the separate video and audio streams that most high-quality sources deliver, so it is required for video downloads. It installs automatically. If that install is blocked (an offline machine, a restrictive proxy, or an unsupported platform), install `ffmpeg` yourself and the tool will pick it up from your `PATH`:
 
