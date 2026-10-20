@@ -1,5 +1,6 @@
 import fs from 'fs-extra';
 import path from 'path';
+import { PROGRESS_DATA, PROGRESS_SCRIPT, progressBlock, writeProgressRuntime } from './progress.js';
 
 type CourseManifest = {
     courseName: string;
@@ -190,6 +191,16 @@ async function regenerateGroupIndex(
         })
     );
 
+    // Each course's lesson list, for the progress shown on its card.
+    const progressScripts: string[] = [];
+    for (const course of courses) {
+        if (await fs.pathExists(path.join(groupDir, course.dirName, PROGRESS_DATA))) {
+            progressScripts.push(`${course.dirName}/${PROGRESS_DATA}`);
+        }
+    }
+    progressScripts.push(PROGRESS_SCRIPT);
+    await writeProgressRuntime(groupDir);
+
     const indexHtml = `
         <!DOCTYPE html>
         <html>
@@ -338,6 +349,7 @@ async function regenerateGroupIndex(
                     ${courseCards.join('')}
                 </section>
             </div>
+            ${progressBlock({ page: 'group', group: groupName }, progressScripts)}
         </body>
         </html>
     `;

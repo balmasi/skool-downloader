@@ -11,6 +11,7 @@ This tool downloads video content, localizes images, preserves course attachment
 - **📄 Asset Localization:** Downloads all lesson images locally and rewrites HTML paths for true offline 100% viewing.
 - **📎 Resource Preservation:** Automatically fetches course attachments (PDFs, DOCX, etc.) via Skool's API.
 - **🎯 Single Lesson Mode:** Download a whole course or just a single lesson using a specific URL.
+- **✅ Progress Tracking:** The downloaded pages remember which lessons you have completed and where you stopped in each video, with progress bars, a "Continue" button and previous/next lesson links. Progress is saved in your browser and can be exported as a backup.
 - **🛠 Interrupted Download Recovery:** Skips already downloaded files and includes a tool to regenerate the index page.
 - **♻️ Self-Updating `yt-dlp`:** Checks once a day for a newer `yt-dlp` and installs it before downloading, so video sites that change how they serve media keep working. The previous copy is kept for a one-command rollback.
 
@@ -108,6 +109,7 @@ downloads/
 └── Community Name/
     └── Course Name/
         ├── index.html (Master navigation page)
+        ├── progress.js, progress-data.js (Progress tracking)
         └── 1-Module Name/
             ├── 1-Lesson Title/
             │   ├── index.html (The lesson page)
@@ -155,6 +157,8 @@ If you manually move files or skip lessons, you can regenerate the master `index
 ```bash
 npm run regenerate-index
 ```
+
+This also adds progress tracking to courses downloaded before that feature existed, so they do not need to be downloaded again.
 
 ## 🛡 Disclaimer
 
