@@ -525,7 +525,7 @@ async function regenerateAllIndexes() {
 
         for (const courseDir of courseDirs) {
             const coursePath = path.join(groupPath, courseDir.name);
-            await regenerateIndex(coursePath, { silent: true });
+            await regenerateIndex(coursePath, { silent: true, upgradeLessonPages: true });
             regeneratedCourses += 1;
         }
 

@@ -1,5 +1,15 @@
 import fs from 'fs-extra';
 import path from 'path';
+import {
+    PROGRESS_DATA,
+    PROGRESS_SCRIPT,
+    addProgressBlockToFile,
+    lessonProgressBlock,
+    progressBlock,
+    writeCourseProgressData,
+    writeProgressRuntime,
+    type ProgressLesson
+} from './progress.js';
 
 type CourseManifest = {
     courseName: string;
@@ -40,6 +50,11 @@ async function writeAtomicHtml(filePath: string, content: string) {
  */
 type RegenerateOptions = {
     silent?: boolean;
+    /**
+     * Also add progress tracking to lesson pages downloaded before it existed.
+     * Only for explicit regeneration: during a download, lesson pages are still being written.
+     */
+    upgradeLessonPages?: boolean;
 };
 
 async function regenerateIndex(
@@ -125,6 +140,7 @@ async function regenerateIndex(
                 let lessonIndex = parseInt(lessonDir.name.split('-')[0]) || 999;
                 let moduleTitleOverride: string | null = null;
                 let moduleIndexOverride: number | null = null;
+                let lessonId: string | null = null;
 
                 if (fs.existsSync(manifestPath)) {
                     try {
@@ -134,6 +150,7 @@ async function regenerateIndex(
                         lessonIndex = manifest.lessonIndex ?? lessonIndex;
                         moduleTitleOverride = manifest.moduleTitle || null;
                         moduleIndexOverride = manifest.moduleIndex ?? null;
+                        lessonId = manifest.lessonId || null;
                     } catch (err) {
                         warn(`⚠️ Failed to read manifest for ${lessonDir.name}, using directory data.`);
                     }
@@ -144,7 +161,8 @@ async function regenerateIndex(
                     path: relativePath,
                     index: lessonIndex,
                     moduleTitleOverride,
-                    moduleIndexOverride
+                    moduleIndexOverride,
+                    id: lessonId
                 });
             }
         }
@@ -182,6 +200,7 @@ async function regenerateIndex(
                 let lessonIndex = parseInt(lessonDir.name.split('-')[0]) || 999;
                 let moduleTitleOverride: string | null = null;
                 let moduleIndexOverride: number | null = null;
+                let lessonId: string | null = null;
 
                 if (fs.existsSync(manifestPath)) {
                     try {
@@ -191,6 +210,7 @@ async function regenerateIndex(
                         lessonIndex = manifest.lessonIndex ?? lessonIndex;
                         moduleTitleOverride = manifest.moduleTitle || null;
                         moduleIndexOverride = manifest.moduleIndex ?? null;
+                        lessonId = manifest.lessonId || null;
                     } catch (err) {
                         warn(`⚠️ Failed to read manifest for ${lessonDir.name}, using directory data.`);
                     }
@@ -201,7 +221,8 @@ async function regenerateIndex(
                     path: relativePath,
                     index: lessonIndex,
                     moduleTitleOverride,
-                    moduleIndexOverride
+                    moduleIndexOverride,
+                    id: lessonId
                 });
             }
         }
@@ -238,6 +259,28 @@ async function regenerateIndex(
         ? path.join(downloadsDir, courseImagePath)
         : null;
     const hasCourseImage = resolvedCourseImagePath ? await fs.pathExists(resolvedCourseImagePath) : false;
+
+    // Lessons without a lesson.json have no Skool ID, so they can't be tracked.
+    const progressGroup = groupName || courseName;
+    const progressLessons: ProgressLesson[] = courseInfo.flatMap(m => m.lessons
+        .filter((l: any) => l.id)
+        .map((l: any) => ({ id: l.id, title: l.title, rel: l.path })));
+    await writeProgressRuntime(downloadsDir);
+    await writeCourseProgressData(downloadsDir, courseName, progressLessons);
+
+    if (options.upgradeLessonPages) {
+        for (const lesson of progressLessons) {
+            const lessonHtml = path.join(downloadsDir, lesson.rel);
+            if (!await fs.pathExists(lessonHtml)) continue;
+            const depth = lesson.rel.split('/').length - 1;
+            await addProgressBlockToFile(lessonHtml, lessonProgressBlock({
+                group: progressGroup,
+                lessonId: lesson.id,
+                title: lesson.title,
+                courseRoot: '../'.repeat(depth)
+            }));
+        }
+    }
 
     // Generate the index HTML
     const indexHtml = `
@@ -455,6 +498,7 @@ async function regenerateIndex(
                         `).join('')}
                     </section>
                 </div>
+                ${progressBlock({ page: 'course', group: progressGroup }, [PROGRESS_DATA, PROGRESS_SCRIPT])}
             </body>
             </html>
         `;

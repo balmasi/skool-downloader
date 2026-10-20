@@ -2,6 +2,7 @@ import { Scraper, Module } from './scraper.js';
 import { Downloader } from './downloader.js';
 import { regenerateIndex } from './regenerate-index.js';
 import { regenerateGroupIndex } from './regenerate-group-index.js';
+import { lessonProgressBlock } from './progress.js';
 import { createConsoleLogger, type Logger } from './logger.js';
 import fs from 'fs-extra';
 import path from 'path';
@@ -585,6 +586,12 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                         </div>
                                     </div>
                                 </div>
+                                ${lessonProgressBlock({
+                                    group: groupName || courseName,
+                                    lessonId: lesson.id,
+                                    title: lessonData.title,
+                                    courseRoot: isRootLesson ? '../' : '../../'
+                                })}
                             </body>
                             </html>
                         `;
