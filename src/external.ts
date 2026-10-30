@@ -706,6 +706,11 @@ export class LinkArchiver {
             const items = raw ? miroItemRects(raw) : [];
             if (!items.length) {
                 await settle(12000, 20000);
+                // A private board shows a sign-up dialog instead of the board.
+                const body = await page.innerText('body').catch(() => '');
+                if (/this is a private board|sign up for free in order to access/i.test(body)) {
+                    throw new Error('Miro board is private (owner has not shared it publicly)');
+                }
                 await shoot(overviewPath);
                 return [overviewPath];
             }
