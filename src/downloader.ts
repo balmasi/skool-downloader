@@ -378,7 +378,7 @@ function findFfmpegOnPath(): string | null {
  * it has no build for. A failure there must not break the whole install, so
  * fall back to a system ffmpeg before giving up.
  */
-async function resolveFfmpegPath(): Promise<string> {
+export async function resolveFfmpegPath(): Promise<string> {
     try {
         // Imported dynamically. A static import of a missing optional
         // dependency throws while the module loads and takes down the whole CLI.

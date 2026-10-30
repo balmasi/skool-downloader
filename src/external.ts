@@ -1,8 +1,13 @@
 import path from 'path';
 import fs from 'fs-extra';
 import axios from 'axios';
-import type { BrowserContext } from 'playwright';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import type { Browser, BrowserContext } from 'playwright';
 import type { Logger } from './logger.js';
+import { resolveFfmpegPath } from './downloader.js';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Lessons point at a lot of material that lives outside Skool: Google Docs,
@@ -240,6 +245,120 @@ const GOOGLE_EXPORTS: Partial<Record<LinkKind, ExportFormat[]>> = {
 
 export type VideoSaver = (url: string, outputDir: string, fileName: string, options?: { maxHeight?: number }) => Promise<void>;
 
+type MiroRect = { x: number; y: number; w: number; h: number };
+type MiroItem = MiroRect & { id: string; type: string; text: string };
+
+/** CSS viewport of the capture page. Also the size of one detail tile. */
+const MIRO_VIEW = { width: 2560, height: 1440 };
+/** Screen pixels per board unit to try, sharpest first. Text stays legible down to ~0.5. */
+const MIRO_SCALES = [1, 0.75, 0.5, 0.35];
+const MIRO_MAX_TILES = 30;
+/** Detail tiles stop being started after this long; the overview and text are always saved. */
+const MIRO_TIME_BUDGET_MS = 150_000;
+/** ffmpeg refuses frames above ~268 MP; stay well below and keep tiles instead. */
+const MIRO_MAX_STITCH_PIXELS = 150_000_000;
+
+/** Text of a Miro item from the Web SDK shape, HTML stripped. */
+function miroItemText(i: any): string {
+    const parts = [i.title, i.content, i.description, i.url && i.type !== 'image' ? i.url : undefined]
+        .filter((s) => typeof s === 'string' && s.trim());
+    return parts
+        .join(' — ')
+        .replace(/<br\s*\/?>|<\/p>|<\/li>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#(\d+);/g, (_m, n) => String.fromCharCode(Number(n)))
+        .replace(/&#x([0-9a-f]+);/gi, (_m, n) => String.fromCharCode(parseInt(n, 16)))
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n\s*\n+/g, '\n')
+        .trim();
+}
+
+/**
+ * Converts Web SDK items to absolute board rectangles. Top-level items are
+ * centred on (x, y) relative to the canvas centre; children of frames are
+ * relative to the parent's top-left corner. Connectors and groups have no
+ * geometry of their own and are dropped.
+ */
+function miroItemRects(raw: any[]): MiroItem[] {
+    const byId = new Map<string, any>(raw.map((i) => [i.id, i]));
+    const abs = new Map<string, MiroRect | null>();
+    const resolve = (i: any, depth = 0): MiroRect | null => {
+        if (abs.has(i.id)) return abs.get(i.id)!;
+        let r: MiroRect | null = null;
+        if (typeof i.x === 'number' && typeof i.y === 'number' && i.width > 0 && i.height > 0) {
+            // width/height are before rotation; use the rotated bounding box.
+            const rad = ((Number(i.rotation) || 0) * Math.PI) / 180;
+            const cos = Math.abs(Math.cos(rad));
+            const sin = Math.abs(Math.sin(rad));
+            const w = i.width * cos + i.height * sin;
+            const h = i.width * sin + i.height * cos;
+            r = { x: i.x - w / 2, y: i.y - h / 2, w, h };
+            const parent = i.parentId && i.relativeTo === 'parent_top_left' ? byId.get(i.parentId) : undefined;
+            if (parent) {
+                const p = depth < 10 ? resolve(parent, depth + 1) : null;
+                r = p ? { ...r, x: r.x + p.x, y: r.y + p.y } : null;
+            }
+        }
+        abs.set(i.id, r);
+        return r;
+    };
+    // A frame is mostly empty space around its children; its children define the content area.
+    const parents = new Set(raw.map((i) => i.parentId).filter(Boolean));
+    const items: MiroItem[] = [];
+    for (const i of raw) {
+        if (i.type === 'frame' && parents.has(i.id)) continue;
+        const r = resolve(i);
+        if (r && Number.isFinite(r.x + r.y + r.w + r.h)) items.push({ ...r, id: i.id, type: i.type, text: miroItemText(i) });
+    }
+    return items;
+}
+
+/** Groups items whose rectangles lie within `gap` board units of each other. */
+function clusterMiroItems(items: MiroItem[], gap: number): { rect: MiroRect; items: MiroItem[] }[] {
+    const parent = items.map((_, i) => i);
+    const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    const order = items.map((_, i) => i).sort((a, b) => items[a].x - items[b].x);
+    for (let a = 0; a < order.length; a++) {
+        const A = items[order[a]];
+        for (let b = a + 1; b < order.length; b++) {
+            const B = items[order[b]];
+            if (B.x > A.x + A.w + gap) break;
+            if (B.y <= A.y + A.h + gap && A.y <= B.y + B.h + gap) parent[find(order[a])] = find(order[b]);
+        }
+    }
+    const groups = new Map<number, MiroItem[]>();
+    items.forEach((it, i) => {
+        const root = find(i);
+        groups.set(root, [...(groups.get(root) || []), it]);
+    });
+    return [...groups.values()]
+        .map((members) => {
+            const x0 = Math.min(...members.map((m) => m.x));
+            const y0 = Math.min(...members.map((m) => m.y));
+            const x1 = Math.max(...members.map((m) => m.x + m.w));
+            const y1 = Math.max(...members.map((m) => m.y + m.h));
+            return { rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, items: members };
+        })
+        .sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
+}
+
+/** Tile grid for one cluster at `scale` screen px per board unit, centred on the cluster. */
+function miroTileGrid(rect: MiroRect, scale: number) {
+    const tw = MIRO_VIEW.width / scale;
+    const th = MIRO_VIEW.height / scale;
+    const pad = 40 / scale;
+    const cols = Math.max(1, Math.ceil((rect.w + 2 * pad) / tw));
+    const rows = Math.max(1, Math.ceil((rect.h + 2 * pad) / th));
+    const x0 = rect.x + rect.w / 2 - (cols * tw) / 2;
+    const y0 = rect.y + rect.h / 2 - (rows * th) / 2;
+    return { cols, rows, tw, th, x0, y0 };
+}
+
 /** State shared by all links of one lesson. */
 type ArchiveRun = {
     lessonDir: string;
@@ -354,7 +473,7 @@ export class LinkArchiver {
             }
 
             if (kind === 'miro' && this.options.getBrowserContext) {
-                record.files.push(rel(await this.saveMiroBoard(link.url, targetDir, baseName)));
+                record.files.push(...(await this.saveMiroBoard(link.url, targetDir, baseName)).map(rel));
                 record.status = 'archived';
                 return record;
             }
@@ -499,34 +618,224 @@ export class LinkArchiver {
      * anonymous viewers. The board opens zoomed to fit, so one screenshot at
      * 3x pixel density keeps the sticky-note text readable.
      */
-    private async saveMiroBoard(url: string, dir: string, baseName: string): Promise<string> {
-        const pngPath = path.join(dir, `${baseName}.miro.png`);
-        if (await existsNonEmpty(pngPath)) return pngPath;
-
+    private async saveMiroBoard(url: string, dir: string, baseName: string): Promise<string[]> {
+        // The text export is written last, so its presence marks a finished capture.
+        const md = path.join(dir, `${baseName}.miro.md`);
+        const overview = path.join(dir, `${baseName}.miro.png`);
+        if (await existsNonEmpty(md)) {
+            const prefix = `${baseName}.miro`;
+            const files = (await fs.readdir(dir)).filter((f) => f.startsWith(prefix) && !f.endsWith('.part.png'));
+            return files.sort().map((f) => path.join(dir, f));
+        }
         const browser = (await this.options.getBrowserContext!()).browser();
         if (!browser) throw new Error('No browser available for the Miro capture');
-        // Large boards can take minutes to rasterise at 3x; 2x is still readable.
-        let lastError: unknown;
-        for (const scale of [3, 2]) {
-            // A separate context: pixel density is fixed per context, and the
-            // board needs no Skool cookies.
-            const context = await browser.newContext({ viewport: { width: 2560, height: 1440 }, deviceScaleFactor: scale });
+        const ffmpegPath = await resolveFfmpegPath().catch(() => null);
+        const saved = await this.captureMiroBoard(browser, url, dir, baseName, ffmpegPath);
+        if (!saved.includes(overview)) saved.unshift(overview);
+        return saved;
+    }
+
+    /**
+     * Saves a public Miro board for offline reading:
+     *  - `<baseName>.miro.png`: overview of all content, UI hidden;
+     *  - `<baseName>.miro-N.png`: one stitched image per content area at 0.35–1
+     *    px per board unit, so text is legible (falls back to
+     *    `<baseName>.miro-tiles/N-tile-RR-CC.png` without ffmpeg or when too big);
+     *  - `<baseName>.miro.md`: every text item, per area, in reading order.
+     *
+     * Miro's own Web SDK (`window.miro.board`) is loaded in the board page even for
+     * anonymous viewers. `board.get()` returns every item with its bounds and
+     * text, and `viewport.set()` moves the camera to an exact board rectangle.
+     * That gives the content bounding boxes (so a stray item far away does not
+     * shrink everything else) and pixel-exact tiles. When the SDK is missing,
+     * only the old fit-to-screen overview is saved.
+     */
+    private async captureMiroBoard(
+        browser: Browser,
+        url: string,
+        outDir: string,
+        baseName: string,
+        ffmpegPath: string | null
+    ): Promise<string[]> {
+        const overviewPath = path.join(outDir, `${baseName}.miro.png`);
+        const saved: string[] = [];
+        const deadline = Date.now() + MIRO_TIME_BUDGET_MS;
+        await fs.ensureDir(outDir);
+
+        // Pixel density is fixed per context, and the board needs no Skool cookies.
+        const context = await browser.newContext({ viewport: MIRO_VIEW, deviceScaleFactor: 1 });
+        try {
+            const page = await context.newPage();
+            let inFlight = 0;
+            page.on('request', () => inFlight++);
+            page.on('requestfinished', () => inFlight--);
+            page.on('requestfailed', () => inFlight--);
+            /** Waits for image/text tiles of the new camera position to arrive. */
+            const settle = async (minMs: number, maxMs: number) => {
+                await page.waitForTimeout(minMs);
+                const end = Date.now() + maxMs - minMs;
+                let quietSince = Date.now();
+                while (Date.now() < end) {
+                    if (inFlight > 0) quietSince = Date.now();
+                    else if (Date.now() - quietSince >= 500) break;
+                    await page.waitForTimeout(150);
+                }
+                // Two frames so the canvas paints what just arrived.
+                await page.evaluate('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))');
+            };
+            const shoot = async (file: string) => {
+                await page.screenshot({ path: `${file}.part.png`, timeout: 60000, animations: 'disabled', caret: 'hide' });
+                await fs.move(`${file}.part.png`, file, { overwrite: true });
+            };
+            const moveTo = (r: MiroRect) =>
+                page.evaluate(
+                    `window.miro.board.viewport.set({ viewport: ${JSON.stringify({ x: r.x, y: r.y, width: r.w, height: r.h })} })`
+                );
+
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            let raw: any[] | null = null;
             try {
-                const page = await context.newPage();
-                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-                await page.waitForTimeout(15000);
-                await fs.ensureDir(dir);
-                await page.screenshot({ path: `${pngPath}.part.png`, timeout: 120000, animations: 'disabled', caret: 'hide' });
-                await fs.move(`${pngPath}.part.png`, pngPath, { overwrite: true });
-                return pngPath;
+                await page.waitForFunction('!!(window.miro && window.miro.board && window.miro.board.get)', null, {
+                    timeout: 45000
+                });
+                await page.waitForFunction('window.boardLoading !== true', null, { timeout: 30000 }).catch(() => {});
+                raw = (await page.evaluate('window.miro.board.get()')) as any[];
             } catch (err) {
-                lastError = err;
-                this.logger.warn(`    ⚠️ Miro capture at ${scale}x failed, ${scale > 2 ? 'retrying at 2x' : 'giving up'}`);
-            } finally {
-                await context.close();
+                this.logger.warn(`    ⚠️ Miro board API unavailable, saving the overview only: ${String(err)}`);
             }
+            const items = raw ? miroItemRects(raw) : [];
+            if (!items.length) {
+                await settle(12000, 20000);
+                await shoot(overviewPath);
+                return [overviewPath];
+            }
+
+            // Hide Miro's chrome (menus, sign-up banner, zoom bar) and keep only the board.
+            await page.addStyleTag({
+                content:
+                    'body * { visibility: hidden !important; } ' +
+                    '#main-canvas, #embeds-root, #embeds-root * { visibility: visible !important; }'
+            });
+
+            // Pick the sharpest scale whose tiles fit the budget.
+            let scale = MIRO_SCALES[MIRO_SCALES.length - 1];
+            let clusters = clusterMiroItems(items, MIRO_VIEW.height / scale / 3);
+            for (const s of MIRO_SCALES) {
+                const c = clusterMiroItems(items, MIRO_VIEW.height / s / 3);
+                const n = c.reduce((sum, k) => sum + miroTileGrid(k.rect, s).cols * miroTileGrid(k.rect, s).rows, 0);
+                if (n <= MIRO_MAX_TILES) {
+                    scale = s;
+                    clusters = c;
+                    break;
+                }
+            }
+
+            // Overview: everything, fitted to the screen, chrome hidden.
+            const all = clusters.reduce(
+                (u, k) => ({
+                    x0: Math.min(u.x0, k.rect.x),
+                    y0: Math.min(u.y0, k.rect.y),
+                    x1: Math.max(u.x1, k.rect.x + k.rect.w),
+                    y1: Math.max(u.y1, k.rect.y + k.rect.h)
+                }),
+                { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
+            );
+            const fit = Math.max((all.x1 - all.x0) / MIRO_VIEW.width, (all.y1 - all.y0) / MIRO_VIEW.height) * 1.04;
+            const ow = MIRO_VIEW.width * fit;
+            const oh = MIRO_VIEW.height * fit;
+            await moveTo({ x: (all.x0 + all.x1) / 2 - ow / 2, y: (all.y0 + all.y1) / 2 - oh / 2, w: ow, h: oh });
+            await settle(3000, 10000);
+            await shoot(overviewPath);
+            saved.push(overviewPath);
+
+            // Detail tiles, then one stitched image per area.
+            let budget = MIRO_MAX_TILES;
+            let skipped = 0;
+            const tileDir = path.join(outDir, `${baseName}.miro-tiles`);
+            // When the budget is tight, the areas with the most items get their tiles first.
+            const chosen = new Set<number>();
+            for (const i of clusters.map((_, i) => i).sort((a, b) => clusters[b].items.length - clusters[a].items.length)) {
+                const g = miroTileGrid(clusters[i].rect, scale);
+                if (g.cols * g.rows <= budget) {
+                    chosen.add(i);
+                    budget -= g.cols * g.rows;
+                }
+            }
+            for (const [index, cluster] of clusters.entries()) {
+                const n = index + 1;
+                const g = miroTileGrid(cluster.rect, scale);
+                // ~3 s per tile; never let one board hold up the lesson for more than a few minutes.
+                if (!chosen.has(index) || Date.now() + g.cols * g.rows * 3000 > deadline) {
+                    skipped++;
+                    continue;
+                }
+                await fs.ensureDir(tileDir);
+                const tiles: string[] = [];
+                for (let r = 0; r < g.rows; r++) {
+                    for (let c = 0; c < g.cols; c++) {
+                        const tile = path.join(
+                            tileDir,
+                            `${n}-tile-${String(r + 1).padStart(2, '0')}-${String(c + 1).padStart(2, '0')}.png`
+                        );
+                        await moveTo({ x: g.x0 + c * g.tw, y: g.y0 + r * g.th, w: g.tw, h: g.th });
+                        await settle(800, 6000);
+                        await shoot(tile);
+                        tiles.push(tile);
+                    }
+                }
+
+                const stitched = path.join(outDir, `${baseName}.miro-${n}.png`);
+                const pixels = g.cols * g.rows * MIRO_VIEW.width * MIRO_VIEW.height;
+                if (tiles.length === 1) {
+                    await fs.move(tiles[0], stitched, { overwrite: true });
+                    saved.push(stitched);
+                } else if (ffmpegPath && pixels <= MIRO_MAX_STITCH_PIXELS) {
+                    try {
+                        const list = path.join(tileDir, `${n}-list.txt`);
+                        // concat demuxer feeds the tiles in row-major order to the tile filter.
+                        await fs.writeFile(list, tiles.map((t) => `file '${path.resolve(t).replace(/'/g, "'\\''")}'`).join('\n'));
+                        await execFileAsync(
+                            ffmpegPath,
+                            ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list,
+                             '-vf', `tile=${g.cols}x${g.rows}`, '-frames:v', '1', '-update', '1', `${stitched}.part.png`],
+                            { timeout: 120000 }
+                        );
+                        await fs.move(`${stitched}.part.png`, stitched, { overwrite: true });
+                        await Promise.all([...tiles, list].map((t) => fs.remove(t)));
+                        saved.push(stitched);
+                    } catch (err) {
+                        this.logger.warn(`    ⚠️ Could not stitch Miro tiles, keeping them separate: ${String(err)}`);
+                        await fs.remove(`${stitched}.part.png`).catch(() => {});
+                        saved.push(...tiles);
+                    }
+                } else {
+                    saved.push(...tiles);
+                }
+            }
+            if (skipped) this.logger.warn(`    ⚠️ Miro board: ${skipped} small area(s) left out of the detail images (time or tile budget)`);
+            if ((await fs.pathExists(tileDir)) && !(await fs.readdir(tileDir)).length) await fs.remove(tileDir);
+
+            // Text export: the board's own text, area by area, top-to-bottom then left-to-right.
+            const lines: string[] = [];
+            for (const [index, cluster] of clusters.entries()) {
+                const texts = cluster.items
+                    .filter((i) => i.text)
+                    .sort((a, b) => Math.round(a.y / 200) - Math.round(b.y / 200) || a.x - b.x);
+                if (!texts.length) continue;
+                lines.push(`## Area ${index + 1}`, '');
+                for (const t of texts) lines.push(`- ${t.type.replace(/_/g, ' ')}: ${t.text.replace(/\n/g, '\n  ')}`);
+                lines.push('');
+            }
+            if (lines.length) {
+                const md = path.join(outDir, `${baseName}.miro.md`);
+                const title = await page.title().catch(() => '');
+                await fs.writeFile(md, [`# ${title.replace(/ - Miro$/, '') || 'Miro board'}`, '', `Source: ${url}`, '', ...lines].join('\n'));
+                saved.push(md);
+            }
+            return saved;
+        } finally {
+            await context.close();
         }
-        throw lastError;
     }
 }
 

@@ -37,7 +37,7 @@ The goal of this project is to provide a robust, platform-independent tool for c
    External resources and links in the lesson text are passed to `LinkArchiver`. It classifies each URL (`classifyLink`) and saves what can be saved without signing in:
    - Google Docs → `.docx` + `.pdf`, Sheets → `.xlsx`, Slides → `.pptx` + `.pdf`, through the public `export` endpoints.
    - Drive files through `drive.usercontent.google.com/download`; Drive folders are listed through `embeddedfolderview` (no Drive API needed).
-   - Miro boards as a 3× screenshot in a separate browser context. Miro's accessibility outline is empty for anonymous viewers, so there is no text export.
+   - Miro boards through Miro's own Web SDK, which the board page loads even for anonymous viewers (the accessibility outline is empty for them). `miro.board.get()` gives every item's bounds and text; items are grouped into content areas so a stray far-away item does not shrink the rest. `miro.board.viewport.set()` moves the camera tile by tile at 0.35–1 px per board unit (max 30 tiles, 150 s), and ffmpeg stitches each area. Output: `<name>.miro.png` (overview), `<name>.miro-N.png` (one readable image per area) and `<name>.miro.md` (all board text). The `.md` is written last and marks a finished capture. Without the SDK only the overview is saved.
    - Video pages (Loom, YouTube, Wistia media, ...) through yt-dlp.
    - Links inside a saved Google Doc are read from its HTML export and Google files among them are saved under `resources/linked-from/` (depth set by `nestedDepth`, default 1).
    
