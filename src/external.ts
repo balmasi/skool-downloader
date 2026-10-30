@@ -505,20 +505,28 @@ export class LinkArchiver {
 
         const browser = (await this.options.getBrowserContext!()).browser();
         if (!browser) throw new Error('No browser available for the Miro capture');
-        // A separate context: pixel density is fixed per context, and the board
-        // needs no Skool cookies.
-        const context = await browser.newContext({ viewport: { width: 2560, height: 1440 }, deviceScaleFactor: 3 });
-        try {
-            const page = await context.newPage();
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-            await page.waitForTimeout(15000);
-            await fs.ensureDir(dir);
-            await page.screenshot({ path: `${pngPath}.part.png` });
-            await fs.move(`${pngPath}.part.png`, pngPath, { overwrite: true });
-            return pngPath;
-        } finally {
-            await context.close();
+        // Large boards can take minutes to rasterise at 3x; 2x is still readable.
+        let lastError: unknown;
+        for (const scale of [3, 2]) {
+            // A separate context: pixel density is fixed per context, and the
+            // board needs no Skool cookies.
+            const context = await browser.newContext({ viewport: { width: 2560, height: 1440 }, deviceScaleFactor: scale });
+            try {
+                const page = await context.newPage();
+                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+                await page.waitForTimeout(15000);
+                await fs.ensureDir(dir);
+                await page.screenshot({ path: `${pngPath}.part.png`, timeout: 120000, animations: 'disabled', caret: 'hide' });
+                await fs.move(`${pngPath}.part.png`, pngPath, { overwrite: true });
+                return pngPath;
+            } catch (err) {
+                lastError = err;
+                this.logger.warn(`    ⚠️ Miro capture at ${scale}x failed, ${scale > 2 ? 'retrying at 2x' : 'giving up'}`);
+            } finally {
+                await context.close();
+            }
         }
+        throw lastError;
     }
 }
 
