@@ -33,13 +33,25 @@ The goal of this project is to provide a robust, platform-independent tool for c
    - A failed update must never fail a download. Everything except an unusable binary is caught, logged and continued past.
 
    The copy being replaced is kept as `yt-dlp.prev` for `skool update --rollback`. `SKOOL_NO_YTDLP_UPDATE=1` switches the automatic check off.
-9. **High-Performance Downloads**:
+9. **Linked Document Backup (`src/external.ts`)**:
+   External resources and links in the lesson text are passed to `LinkArchiver`. It classifies each URL (`classifyLink`) and saves what can be saved without signing in:
+   - Google Docs → `.docx` + `.pdf`, Sheets → `.xlsx`, Slides → `.pptx` + `.pdf`, through the public `export` endpoints.
+   - Drive files through `drive.usercontent.google.com/download`; Drive folders are listed through `embeddedfolderview` (no Drive API needed).
+   - Miro boards as a 3× screenshot in a separate browser context. Miro's accessibility outline is empty for anonymous viewers, so there is no text export.
+   - Video pages (Loom, YouTube, Wistia media, ...) through yt-dlp.
+   - Links inside a saved Google Doc are read from its HTML export and Google files among them are saved under `resources/linked-from/` (depth set by `nestedDepth`, default 1).
+   
+   Google returns its sign-in page with HTTP 200 for private files, so every export is checked for `text/html` before it is written. One document linked several times in a lesson is saved once. All results go to `links.json` and a "Links & Saved Documents" section on the lesson page. Referral links are kept verbatim; they are never fetched.
+10. **Wistia account links**: `<account>.wistia.com/medias/<id>` redirects to a sign-in page. `normalizeVideoUrl()` rewrites it to `wistia:<id>`, which yt-dlp fetches through the public embed.
+    **Supercut share links** crash yt-dlp's generic extractor. `resolveSupercutPlaylist()` reads the HLS playlist path and signing token from the page's React Router state and builds a signed master playlist URL. The URL is several KB long and its signatures expire after about two hours, so it is resolved right before the download and passed to yt-dlp through a `-a` batch file. Do not hand it to ffmpeg directly: ffmpeg's HLS reader truncates URLs at about 4 KB.
+11. **High-Performance Downloads**:
    The downloader is optimized with `-N 16` for parallel fragment fetching and `ffmpeg` post-processing (`+faststart`) for instant in-browser playback.
 
 ## Project Structure
 - `src/auth.ts`: Handles the manual login flow and cookie conversion.
 - `src/scraper.ts`: Navigates the course tree and parses lesson metadata from Next.js state.
 - `src/downloader.ts`: Wrapper for `yt-dlp` and logic for image localization and resource downloads.
+- `src/external.ts`: Saves linked Google Docs/Sheets/Slides, Drive files and folders, Miro boards and linked videos; records all other links.
 - `src/cli.ts`: Interactive CLI entry point (login, download course, download single lesson, regenerate index, update yt-dlp). Uses Listr2 to run lesson downloads concurrently with per-lesson status output.
 - `src/index.ts`: Core download orchestrator. Handles course parsing, output path resolution, lesson processing, and manifest/index generation. Exposes callbacks + task runner hooks for the CLI.
 - **Single Lesson Extraction**: The tool detects `?md=` or `?lesson=` in the input URL to download only a specific lesson instead of the entire course, and reports the exact destination path.

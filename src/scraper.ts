@@ -20,6 +20,8 @@ export interface Lesson {
     contentHtml?: string;
     videoLink?: string;
     resources?: Resource[];
+    /** Links written into the lesson text, in reading order. */
+    contentLinks?: Array<{ url: string; title: string }>;
 }
 
 export interface Module {
@@ -71,6 +73,10 @@ function resolveClassroomRootUrl(inputUrl: string) {
     return urlObj.toString();
 }
 
+function escapeHtml(value: string) {
+    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 export class Scraper {
     private browser: Browser | null = null;
     private context: BrowserContext | null = null;
@@ -87,6 +93,12 @@ export class Scraper {
         } else {
             this.context = await this.browser.newContext();
         }
+    }
+
+    /** Shared with the link archiver, which needs a browser for Miro boards. */
+    async getContext(): Promise<BrowserContext> {
+        if (!this.context) await this.init();
+        return this.context!;
     }
 
     async close() {
@@ -507,6 +519,7 @@ export class Scraper {
 
         // Skool stores rich text as a stringified JSON array or primitive HTML
         let body = metadata.desc || foundLesson?.body || '';
+        const contentLinks: Array<{ url: string; title: string }> = [];
 
         // If it looks like [v2][{"type"...}], it's TipTap/JSON format
         if (typeof body === 'string' && body.startsWith('[v2]')) {
@@ -514,6 +527,7 @@ export class Scraper {
                 const jsonPart = body.substring(4);
                 const nodes = JSON.parse(jsonPart);
                 body = this.parseTipTap(nodes);
+                this.collectTipTapLinks(nodes, contentLinks);
             } catch (e) {
                 this.logger.error(`Failed to parse TipTap content: ${String(e)}`);
             }
@@ -525,8 +539,19 @@ export class Scraper {
             url: url,
             contentHtml: body,
             videoLink: vLink,
-            resources: resources
+            resources: resources,
+            contentLinks
         };
+    }
+
+    private collectTipTapLinks(nodes: any[], out: Array<{ url: string; title: string }>) {
+        for (const node of nodes ?? []) {
+            for (const mark of node?.marks ?? []) {
+                const href = mark?.type === 'link' ? mark.attrs?.href : undefined;
+                if (href) out.push({ url: href, title: String(node.text || href).trim() || href });
+            }
+            if (Array.isArray(node?.content)) this.collectTipTapLinks(node.content, out);
+        }
     }
 
     // Helper removed as logic is now in extractLessonData for shared state
@@ -540,11 +565,12 @@ export class Scraper {
             if (node.type === 'hardBreak') {
                 return '<br/>';
             }
-            if (node.type === 'bulletList') {
+            if (node.type === 'bulletList' || node.type === 'unorderedList') {
                 return `<ul>${this.parseTipTap(node.content)}</ul>`;
             }
             if (node.type === 'orderedList') {
-                return `<ol>${this.parseTipTap(node.content)}</ol>`;
+                const start = node.attrs?.start && node.attrs.start !== 1 ? ` start="${node.attrs.start}"` : '';
+                return `<ol${start}>${this.parseTipTap(node.content)}</ol>`;
             }
             if (node.type === 'listItem') {
                 return `<li>${this.parseTipTap(node.content)}</li>`;
@@ -577,11 +603,15 @@ export class Scraper {
         if (!content) return '';
         return content.map(item => {
             if (item.type === 'text') {
-                let text = item.text;
+                let text = escapeHtml(item.text ?? '');
                 if (item.marks) {
                     item.marks.forEach((mark: any) => {
                         if (mark.type === 'bold') text = `<b>${text}</b>`;
-                        if (mark.type === 'link') text = `<a href="${mark.attrs.href}">${text}</a>`;
+                        if (mark.type === 'italic') text = `<i>${text}</i>`;
+                        if (mark.type === 'underline') text = `<u>${text}</u>`;
+                        if (mark.type === 'strike') text = `<s>${text}</s>`;
+                        if (mark.type === 'code') text = `<code>${text}</code>`;
+                        if (mark.type === 'link') text = `<a href="${escapeHtml(mark.attrs.href)}" target="_blank" rel="noopener">${text}</a>`;
                     });
                 }
                 return text;

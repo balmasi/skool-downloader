@@ -10,6 +10,7 @@ This tool downloads video content, localizes images, preserves course attachment
 - **📹 High-Quality Video:** Downloads the highest available quality and applies `+faststart` for instant browser playback.
 - **📄 Asset Localization:** Downloads all lesson images locally and rewrites HTML paths for true offline 100% viewing.
 - **📎 Resource Preservation:** Automatically fetches course attachments (PDFs, DOCX, etc.) via Skool's API.
+- **🔗 Linked Document Backup:** Links in lesson resources and lesson text are saved too. Google Docs become `.docx` and `.pdf`, Google Sheets become `.xlsx`, Google Slides become `.pptx` and `.pdf`, public Drive files and folders are downloaded, and Miro boards are captured as a high-resolution image. Google files linked from inside a saved Google Doc are saved one level deep. Every other link (tools, referral links) is recorded with its exact URL in the lesson page and in `links.json`.
 - **🎯 Single Lesson Mode:** Download a whole course or just a single lesson using a specific URL.
 - **🛠 Interrupted Download Recovery:** Skips already downloaded files and includes a tool to regenerate the index page.
 - **♻️ Self-Updating `yt-dlp`:** Checks once a day for a newer `yt-dlp` and installs it before downloading, so video sites that change how they serve media keep working. The previous copy is kept for a one-command rollback.
@@ -100,6 +101,17 @@ To download only a **single lesson**:
 npm run skool "https://www.skool.com/your-community/classroom/course-id?md=lesson-id"
 ```
 
+To leave out parts of a classroom, pass a case-insensitive pattern. Both flags can be repeated:
+
+```bash
+# Skip whole courses (community URL only)
+npm run skool https://www.skool.com/your-community/classroom -- --skip-course "\[2025\]"
+# Skip modules by title
+npm run skool https://www.skool.com/your-community/classroom/course-id -- --skip-module "accountability"
+```
+
+If two courses in a community have the same title, the second one is saved as `Course Name (course-id)` so they do not overwrite each other.
+
 ## 📁 Output Structure
 
 The tool creates a `downloads/` folder with the following structure:
@@ -113,7 +125,10 @@ downloads/
             │   ├── index.html (The lesson page)
             │   ├── video.mp4
             │   ├── assets/ (Localized images)
-            │   └── resources/ (Attachments)
+            │   ├── links.json (Every link, its type, and its saved copies)
+            │   ├── lesson.json (Lesson metadata, video source, any errors)
+            │   └── resources/ (Attachments and saved Google/Drive/Miro copies)
+            │       └── linked-from/ (Google files linked inside a saved doc)
             └── ...
 ```
 

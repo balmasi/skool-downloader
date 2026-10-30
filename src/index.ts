@@ -3,6 +3,7 @@ import { Downloader } from './downloader.js';
 import { regenerateIndex } from './regenerate-index.js';
 import { regenerateGroupIndex } from './regenerate-group-index.js';
 import { createConsoleLogger, type Logger } from './logger.js';
+import { LinkArchiver, renderLinkItems, type LinkInput, type LinkRecord } from './external.js';
 import fs from 'fs-extra';
 import path from 'path';
 import pLimit from 'p-limit';
@@ -67,6 +68,11 @@ type LessonManifest = {
     relativePath: string;
     hasVideo: boolean;
     resourcesCount: number;
+    lessonUrl?: string;
+    videoLink?: string;
+    videoError?: string;
+    linksCount?: number;
+    failedLinks?: number;
     updatedAt: string;
 };
 
@@ -118,6 +124,10 @@ export type DownloadOptions = {
     concurrency?: number;
     mode?: DownloadMode;
     lessonId?: string | null;
+    /** Modules whose title matches any of these (case-insensitive regex) are not downloaded. */
+    skipModules?: string[];
+    /** Folder name for the course, used when two courses share a title. */
+    courseDirName?: string;
     logger?: Logger;
     callbacks?: DownloadCallbacks;
     suppressIndexLogs?: boolean;
@@ -232,6 +242,11 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
 
     const scraper = new Scraper(logger);
     const downloader = new Downloader(logger);
+    const archiver = new LinkArchiver({
+        logger,
+        getBrowserContext: () => scraper.getContext(),
+        saveVideo: (url, dir, name, videoOptions) => downloader.downloadVideo(url, dir, name, videoOptions)
+    });
 
     let completedLessons = 0;
     let failedLessons = 0;
@@ -242,6 +257,15 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
 
         if (modules.length === 0) {
             throw new Error('No modules found. Are you sure this is a classroom URL and you are logged in?');
+        }
+
+        // Filtered without renumbering, so a module keeps its folder name and
+        // place whether or not its neighbours were skipped.
+        const skipPatterns = (options.skipModules ?? []).map(p => new RegExp(p, 'i'));
+        if (skipPatterns.length > 0) {
+            const skipped = modules.filter(m => skipPatterns.some(re => re.test(m.title)));
+            for (const m of skipped) logger.info(`⏭️  Skipping module: ${m.title}`);
+            modules = modules.filter(m => !skipped.includes(m));
         }
 
         if (targetLessonId) {
@@ -267,7 +291,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
         }
 
         const sanitizedGroupName = sanitizeName(groupName);
-        const sanitizedCourseName = sanitizeName(courseName);
+        const sanitizedCourseName = sanitizeName(options.courseDirName ?? courseName);
 
         const defaultOutputDir = path.join(
             process.cwd(),
@@ -418,12 +442,14 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                             const localizedHtml = await downloader.localizeImages(lessonData.contentHtml || '', lessonDir);
 
                             let hasVideo = false;
+                            let videoError: string | undefined;
                             if (lessonData.videoLink) {
                                 try {
                                     updateStatus('Downloading video...');
                                     await downloader.downloadVideo(lessonData.videoLink, lessonDir, 'video');
                                     hasVideo = true;
                                 } catch (err) {
+                                    videoError = String(err).slice(0, 500);
                                     logger.warn(`    ⚠️ Failed to download video for ${lesson.title}`);
                                 }
                             }
@@ -436,10 +462,8 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                 const resTasks = lessonData.resources.map(async (res) => {
                                     if (!res.downloadUrl) return null;
 
-                                    if (res.isExternal) {
-                                        logger.info(`    🔗 External resource linked: ${res.title}`);
-                                        return `<li><a href="${res.downloadUrl}" target="_blank">${res.title} (External)</a></li>`;
-                                    }
+                                    // External links are saved by the link archiver below.
+                                    if (res.isExternal) return null;
 
                                     try {
                                         updateStatus('Downloading resources...');
@@ -466,6 +490,21 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                 const results = await Promise.all(resTasks);
                                 results.forEach(r => { if (r) resourcesHtml.push(r); });
                             }
+
+                            const linkInputs: LinkInput[] = [
+                                ...(lessonData.resources ?? [])
+                                    .filter(res => res.isExternal && res.downloadUrl)
+                                    .map(res => ({ url: res.downloadUrl!, title: res.title, source: 'resource' as const })),
+                                ...(lessonData.contentLinks ?? [])
+                                    .map(link => ({ url: link.url, title: link.title, source: 'content' as const }))
+                            ];
+                            let links: LinkRecord[] = [];
+                            if (linkInputs.length > 0) {
+                                updateStatus('Saving linked documents...');
+                                links = await archiver.archiveAll(linkInputs, lessonDir);
+                                await writeAtomicJson(path.join(lessonDir, 'links.json'), links);
+                            }
+                            const failedLinks = links.filter(l => l.status === 'failed').length;
 
                             const isRootLesson = mInfo.moduleDirName.length === 0;
                             const groupLink = isRootLesson ? '../../index.html' : '../../../index.html';
@@ -551,6 +590,13 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                         text-decoration: none;
                                     }
                                     .resources a::before { content: "📁"; }
+                                    .links a::before, .links a.local::before { content: none; }
+                                    .links li { display: block; }
+                                    .links .kind { font-size: 0.75rem; text-transform: uppercase; color: var(--muted); margin-right: 6px; }
+                                    .links code { display: block; font-size: 0.8rem; color: var(--muted); word-break: break-all; }
+                                    .links a.local { margin-right: 10px; font-weight: 500; }
+                                    .links a.local::before { content: "💾 "; }
+                                    .links ul.nested { margin: 6px 0 0 18px; }
                                     a { color: var(--accent); text-decoration: none; word-break: break-word; }
                                     a:hover { text-decoration: underline; }
                                     .nav { margin-top: 28px; padding-top: 16px; border-top: 1px solid rgba(20,22,29,0.08); }
@@ -580,6 +626,14 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                             </ul>
                                         </div>
                                         ` : ''}
+                                        ${links.length > 0 ? `
+                                        <div class="resources links">
+                                            <h3>Links &amp; Saved Documents</h3>
+                                            <ul>
+                                                ${renderLinkItems(links)}
+                                            </ul>
+                                        </div>
+                                        ` : ''}
                                         <div class="nav">
                                             <a href="${courseLink}">Back to Course Index</a>
                                         </div>
@@ -605,6 +659,11 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
                                     : `${lessonDirName}/index.html`,
                                 hasVideo,
                                 resourcesCount: resourcesHtml.length,
+                                lessonUrl: lesson.url,
+                                videoLink: lessonData.videoLink || undefined,
+                                videoError,
+                                linksCount: links.length,
+                                failedLinks,
                                 updatedAt: new Date().toISOString()
                             };
 

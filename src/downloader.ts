@@ -419,6 +419,51 @@ function looksLikeStaleExtractor(error: unknown): boolean {
     );
 }
 
+/**
+ * Course owners often paste the link from their Wistia account
+ * (`<account>.wistia.com/medias/<id>`). That page redirects anonymous visitors
+ * to a sign-in form, but the same media plays publicly through Wistia's embed,
+ * which yt-dlp reaches with the `wistia:<id>` form.
+ */
+export function normalizeVideoUrl(url: string): string {
+    const wistia = url.match(/^https?:\/\/[^/]*wistia\.(?:com|net)\/(?:medias|embed\/iframe|embed\/medias)\/([a-z0-9]{10})/i);
+    if (wistia) return `wistia:${wistia[1]}`;
+    return url;
+}
+
+/**
+ * Supercut share pages crash yt-dlp's generic extractor. The page embeds its
+ * React Router state as `streamController.enqueue("…")` calls; that state holds
+ * a relative HLS playlist path and a signing token. With the token appended as
+ * `_sp`, the playlist lists fully signed segment URLs that yt-dlp can fetch.
+ * The signatures expire after about two hours, so this runs right before the
+ * download.
+ */
+export async function resolveSupercutPlaylist(shareUrl: string): Promise<string> {
+    const u = new URL(shareUrl);
+    const { data: html } = await axios.get<string>(u.origin + u.pathname, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        responseType: 'text',
+        timeout: 60000
+    });
+    const chunks = [...html.matchAll(/streamController\.enqueue\(("(?:[^"\\]|\\.)*")\)/g)]
+        .map(m => JSON.parse(m[1]!) as string);
+    const flat: unknown[] = JSON.parse(chunks.join('').split('\n')[0] || '[]');
+    const after = (key: string) => flat[flat.indexOf(key) + 1];
+    const playlist = after('videoPlaylist');
+    const token = after('playlistToken');
+    if (typeof playlist !== 'string' || typeof token !== 'string') {
+        throw new Error('Supercut: playlist or token not found (private or removed?)');
+    }
+    const m3u8 = new URL(playlist, u.origin);
+    m3u8.searchParams.set('_sp', token);
+    return m3u8.toString();
+}
+
+function isSupercutShare(url: string) {
+    return /^https?:\/\/(www\.)?supercut\.ai\/share\//i.test(url);
+}
+
 export class Downloader {
     private ytDlp: any = null;
     private ffmpegPath: string | null = null;
@@ -460,7 +505,7 @@ export class Downloader {
         return this.initPromise;
     }
 
-    async downloadVideo(url: string, outputDir: string, filename: string) {
+    async downloadVideo(url: string, outputDir: string, filename: string, options: { maxHeight?: number } = {}) {
         if (!this.ytDlp) await this.init();
 
         await fs.ensureDir(outputDir);
@@ -478,8 +523,22 @@ export class Downloader {
         const displayUrl = url.length > 100 ? url.substring(0, 97) + '...' : url;
         this.logger.info(`    ⬇️  Downloading video from ${displayUrl}`);
 
+        // The resolved Supercut URL is several KB long, so it goes to yt-dlp
+        // through a batch file rather than the command line.
+        let source = [normalizeVideoUrl(url)];
+        let batchFile: string | null = null;
+        if (isSupercutShare(url)) {
+            batchFile = path.join(outputDir, `.${filename}.url.txt`);
+            await fs.writeFile(batchFile, `${await resolveSupercutPlaylist(url)}\n`);
+            source = ['-a', batchFile];
+        }
+
+        const h = options.maxHeight;
+        const format = h ? ['-f', `bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/b`] : isSupercutShare(url) ? ['-f', 'bv*+ba/b'] : [];
+
         const args = [
-            url,
+            ...source,
+            ...format,
             '-o', outputPath,
             '--no-check-certificates',
             '--prefer-free-formats',
@@ -509,6 +568,8 @@ export class Downloader {
                 this.logger.error(STALE_EXTRACTOR_HINT);
             }
             throw error;
+        } finally {
+            if (batchFile) await fs.remove(batchFile).catch(() => {});
         }
     }
 
@@ -523,8 +584,6 @@ export class Downloader {
             }
         }
 
-        const writer = fs.createWriteStream(outputPath);
-
         const response = await axios({
             url,
             method: 'GET',
@@ -533,15 +592,15 @@ export class Downloader {
                 'Referer': 'https://www.skool.com/',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             },
-            timeout: 10000
+            timeout: 60000
         });
 
-        (response.data as Readable).pipe(writer);
-
-        return new Promise((resolve, reject) => {
-            writer.on('finish', resolve);
-            writer.on('error', reject);
-        });
+        // Written to a side path first. The size check above treats any
+        // non-empty file as done, so an interrupted download written straight
+        // to outputPath would never be retried.
+        const partPath = `${outputPath}.part`;
+        await pipeline(response.data as Readable, fs.createWriteStream(partPath));
+        await fs.move(partPath, outputPath, { overwrite: true });
     }
 
     async localizeImages(html: string, outputDir: string): Promise<string> {
