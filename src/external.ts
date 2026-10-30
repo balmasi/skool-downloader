@@ -111,15 +111,6 @@ function videoId(host: string, url: URL): string | undefined {
     return p.length > 1 ? p : undefined;
 }
 
-function isYouTube(url: string) {
-    try {
-        const host = new URL(url).hostname;
-        return host.endsWith('youtube.com') || host === 'youtu.be';
-    } catch {
-        return false;
-    }
-}
-
 export function sanitizeFileName(value: string) {
     const cleaned = value.replace(/[/\\?%*:|"<>\x00-\x1f]/g, '-').replace(/\s+/g, ' ').trim();
     return (cleaned || 'untitled').slice(0, 120);
@@ -521,10 +512,10 @@ export class LinkArchiver {
             if (id === docId) continue;
             const input: LinkInput = { url: anchor.url, title: anchor.text || anchor.url, source: 'nested' };
             const isGoogleFile = kind.startsWith('google-') && kind !== 'google-form';
-            // Walkthrough videos (Loom, Wistia, Fathom, ...) and Miro boards in
-            // SOP docs are course material. Public YouTube videos linked from
-            // docs are mostly third-party, so they are recorded, not saved.
-            const isSaveable = isGoogleFile || kind === 'miro' || (kind === 'video' && !isYouTube(anchor.url));
+            // Walkthrough videos (Loom, Wistia, YouTube, ...) and Miro boards in
+            // SOP docs are course material; a YouTube video can be unlisted or
+            // deleted as easily as a Loom.
+            const isSaveable = isGoogleFile || kind === 'miro' || kind === 'video';
             if (!isSaveable || !id) {
                 const previous = run.done.get(id ? `${kind}:${id}` : anchor.url);
                 nested.push(previous
