@@ -4,6 +4,7 @@ import path from 'path';
 type CourseManifest = {
     courseName: string;
     groupName: string;
+    courseIndex?: number;
     courseImageUrl?: string;
     courseImagePath?: string;
     modules: Array<{
@@ -18,6 +19,7 @@ type GroupIndexCourse = {
     dirName: string;
     courseName: string;
     groupName?: string;
+    courseIndex?: number;
     courseImagePath?: string;
     modulesCount: number;
     lessonsCount: number;
@@ -104,6 +106,7 @@ async function loadCourseInfo(coursePath: string, dirName: string): Promise<Grou
         dirName,
         courseName,
         groupName,
+        courseIndex: manifest?.courseIndex,
         courseImagePath,
         modulesCount: counts.modulesCount,
         lessonsCount: counts.lessonsCount,
@@ -147,7 +150,12 @@ async function regenerateGroupIndex(
 
     const groupName = resolvedGroupName || path.basename(groupDir);
 
+    // Classroom order first, as on Skool. Courses saved before courseIndex
+    // existed have none and keep the old order after them.
     courses.sort((a, b) => {
+        if (a.courseIndex !== undefined || b.courseIndex !== undefined) {
+            return (a.courseIndex ?? Infinity) - (b.courseIndex ?? Infinity);
+        }
         if (a.updatedAt && b.updatedAt) {
             return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
         }

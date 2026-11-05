@@ -20,10 +20,12 @@ type CliArgs = {
     lessonId?: string | null;
     regenerateDir?: string;
     rollback?: boolean;
+    skipModules?: string[];
+    skipCourses?: string[];
 };
 
 function showHelp() {
-    console.log(`\nSkool Downloader\n\nUsage:\n  skool                          Interactive mode\n  skool login                    Log in to Skool\n  skool <classroom-url>          Download a course\n  skool <group-classroom-url>    Download all courses in a community\n  skool <lesson-url>             Download a single lesson (URL with ?md=)\n  skool regenerate-index         Regenerate all course indexes\n  skool update                   Update the yt-dlp binary to the latest release\n\nOptions:\n  -o, --output <dir>             Output directory (course root)\n  -c, --concurrency <number>     Lesson concurrency (default: 8)\n  --course                       Force course mode (ignore ?md=)\n  --lesson                       Force lesson mode\n  --lesson-id <id>               Explicit lesson id\n  --rollback                     With 'update', restore the previous yt-dlp\n  -h, --help                     Show help\n\nEnvironment:\n  SKOOL_DOWNLOADER_CACHE_DIR     Where the yt-dlp binary is kept\n  SKOOL_NO_YTDLP_UPDATE=1        Never check for a newer yt-dlp automatically\n`);
+    console.log(`\nSkool Downloader\n\nUsage:\n  skool                          Interactive mode\n  skool login                    Log in to Skool\n  skool <classroom-url>          Download a course\n  skool <group-classroom-url>    Download all courses in a community\n  skool <lesson-url>             Download a single lesson (URL with ?md=)\n  skool regenerate-index         Regenerate all course indexes\n  skool update                   Update the yt-dlp binary to the latest release\n\nOptions:\n  -o, --output <dir>             Output directory (course root)\n  -c, --concurrency <number>     Lesson concurrency (default: 8)\n  --course                       Force course mode (ignore ?md=)\n  --lesson                       Force lesson mode\n  --lesson-id <id>               Explicit lesson id\n  --skip-module <regex>          Skip modules whose title matches (repeatable)\n  --skip-course <regex>          With a community URL, skip matching courses (repeatable)\n  --rollback                     With 'update', restore the previous yt-dlp\n  -h, --help                     Show help\n\nEnvironment:\n  SKOOL_DOWNLOADER_CACHE_DIR     Where the yt-dlp binary is kept\n  SKOOL_NO_YTDLP_UPDATE=1        Never check for a newer yt-dlp automatically\n`);
 }
 
 function parseArgs(args: string[]): CliArgs {
@@ -59,6 +61,15 @@ function parseArgs(args: string[]): CliArgs {
         }
         if (arg === '--lesson') {
             parsed.mode = 'lesson';
+            continue;
+        }
+        if (arg === '--skip-module' || arg === '--skip-course') {
+            const next = args[i + 1];
+            if (next) {
+                const key = arg === '--skip-module' ? 'skipModules' : 'skipCourses';
+                parsed[key] = [...(parsed[key] ?? []), next];
+            }
+            i++;
             continue;
         }
         if (arg === '--lesson-id') {
@@ -225,6 +236,17 @@ function resolveCourseOutputDir(outputRoot: string, groupName: string, courseNam
     return path.join(outputRoot, sanitizeName(groupName), sanitizeName(courseName));
 }
 
+/**
+ * Communities sometimes have two courses with the same title (for example two
+ * "[2026] Call Recordings" courses). Both would write into one folder, so the
+ * later ones get the course slug appended.
+ */
+function courseFolderTitle(course: CourseListItem, all: CourseListItem[]) {
+    const first = all.find(c => c.title === course.title);
+    if (first === course) return course.title;
+    return `${course.title} (${course.name ?? course.key})`;
+}
+
 async function runInteractive() {
     intro(pc.cyan('Skool Downloader'));
 
@@ -370,9 +392,11 @@ async function runInteractive() {
         for (const course of selectedCourses) {
             log.info(`\n${pc.bold(course.title)} ${pc.dim(`· ${library.groupName}`)}`);
             try {
+                const folderTitle = courseFolderTitle(course, library.courses);
                 const summary = await downloadCourse({
                     url: course.url,
-                    outputDir: outputRoot ? resolveCourseOutputDir(outputRoot, library.groupName, course.title) : undefined,
+                    outputDir: outputRoot ? resolveCourseOutputDir(outputRoot, library.groupName, folderTitle) : undefined,
+                    courseDirName: folderTitle,
                     concurrency,
                     mode: 'course',
                     logger: interactiveLogger,
@@ -574,11 +598,18 @@ async function runWithArgs(args: CliArgs) {
             const library = await fetchCourseLibrary(args.url, logger);
             const outputRoot = args.outputDir && args.outputDir !== 'undefined' ? args.outputDir : undefined;
             let failedCourses = 0;
-            const { accessible, locked } = filterAccessibleCourses(library.courses);
+            const { accessible: allAccessible, locked } = filterAccessibleCourses(library.courses);
 
             if (locked.length > 0) {
                 console.warn(`Skipping ${locked.length} locked course${locked.length === 1 ? '' : 's'} (no access).`);
             }
+
+            const skipCourses = (args.skipCourses ?? []).map(p => new RegExp(p, 'i'));
+            const accessible = allAccessible.filter(course => {
+                const skip = skipCourses.some(re => re.test(course.title) || re.test(course.name ?? ''));
+                if (skip) console.log(`Skipping course: ${course.title}`);
+                return !skip;
+            });
 
             if (accessible.length === 0) {
                 console.warn('No accessible courses found to download.');
@@ -587,11 +618,14 @@ async function runWithArgs(args: CliArgs) {
 
             for (const course of accessible) {
                 try {
+                    const folderTitle = courseFolderTitle(course, library.courses);
                     await downloadCourse({
                         url: course.url,
-                        outputDir: outputRoot ? resolveCourseOutputDir(outputRoot, library.groupName, course.title) : undefined,
+                        outputDir: outputRoot ? resolveCourseOutputDir(outputRoot, library.groupName, folderTitle) : undefined,
+                        courseDirName: folderTitle,
                         concurrency: args.concurrency,
-                        mode: 'course'
+                        mode: 'course',
+                        skipModules: args.skipModules
                     });
                 } catch (err) {
                     failedCourses += 1;
@@ -610,7 +644,8 @@ async function runWithArgs(args: CliArgs) {
             outputDir: args.outputDir,
             concurrency: args.concurrency,
             mode: args.mode,
-            lessonId: args.lessonId
+            lessonId: args.lessonId,
+            skipModules: args.skipModules
         });
         return;
     }
