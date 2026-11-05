@@ -35,6 +35,8 @@ export interface ClassroomResult {
     groupName: string;
     courseName: string;
     courseImageUrl?: string;
+    /** Position of the course in the classroom, starting at 0. */
+    courseIndex?: number;
     modules: Module[];
 }
 
@@ -173,6 +175,12 @@ export class Scraper {
                 foundCourse?.metadata?.coverSmallUrl;
         }
 
+        // The classroom lists courses in allCourses order; keep it for the group index.
+        const courseHandle = cleanUrl.split('/').pop();
+        const classroomCourses = pageProps.allCourses || pageProps.renderData?.allCourses || [];
+        const foundIndex = classroomCourses.findIndex((c: any) => c.name === courseHandle || c.id === courseData?.id);
+        const courseIndex = foundIndex >= 0 ? foundIndex : undefined;
+
         this.logger.info(`🎓 Course detected: ${courseName}`);
 
         // Skool Hierarchy:
@@ -229,6 +237,7 @@ export class Scraper {
             groupName,
             courseName,
             courseImageUrl,
+            courseIndex,
             modules: modules.filter(m => m.lessons.length > 0)
         };
     }

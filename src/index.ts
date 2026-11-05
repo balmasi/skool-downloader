@@ -46,6 +46,7 @@ function registerShutdownHandlers(logger: Logger) {
 type CourseManifest = {
     courseName: string;
     groupName: string;
+    courseIndex?: number;
     courseImageUrl?: string;
     courseImagePath?: string;
     modules: Array<{
@@ -253,7 +254,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
 
     try {
         logger.info('🚀 Fetching course structure...');
-        let { modules, courseName, groupName, courseImageUrl } = await scraper.parseClassroom(classroomUrl);
+        let { modules, courseName, groupName, courseImageUrl, courseIndex } = await scraper.parseClassroom(classroomUrl);
 
         if (modules.length === 0) {
             throw new Error('No modules found. Are you sure this is a classroom URL and you are logged in?');
@@ -389,6 +390,7 @@ export async function downloadCourse(options: DownloadOptions): Promise<Download
         const courseManifest: CourseManifest = {
             courseName,
             groupName,
+            courseIndex,
             courseImageUrl,
             courseImagePath,
             modules: courseInfo.map(m => ({
